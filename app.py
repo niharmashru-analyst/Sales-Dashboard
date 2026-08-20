@@ -420,7 +420,7 @@ with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
             live_url = st.text_input("Live Excel link", key="live_url_input")
             if live_url and st.button("⬇️ Fetch from link"):
                 try:
-                    new_df = read_uploaded_excel(live_url)
+                    xls = pd.ExcelFile(uploaded)
                     st.session_state["_fetched_df"] = new_df
                     st.success(f"Fetched {len(new_df):,} rows. Review below, then click 'Add to database'.")
                 except Exception as e:
