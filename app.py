@@ -50,12 +50,32 @@ pio.templates.default = "plotly_dark"
 px.defaults.color_discrete_sequence = PLUM_SEQUENCE
 px.defaults.color_continuous_scale = ["#3a2530", "#7a3457", "#a85c85", "#e0a3c4"]
 
-# Dark-friendly gradient for dataframe cell highlighting (no near-white steps,
-# unlike matplotlib's built-in RdPu/RdYlGn which look wrong on a dark grid)
-from matplotlib.colors import LinearSegmentedColormap
-DARK_CMAP = LinearSegmentedColormap.from_list(
-    "dark_plum", ["#241a22", "#7a3457", "#e0a3c4"]
-)
+# Dark-friendly gradient for dataframe cell highlighting — pure Python, no
+# matplotlib needed (avoids it as a deploy dependency entirely). Interpolates
+# between dark card color and plum accent based on each value's percentile.
+def _hex_to_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def _lerp_color(c1, c2, t):
+    r = tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
+    return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
+
+def dark_gradient(series, low="#241a22", high="#e0a3c4"):
+    """Return a list of 'background-color: #xxxxxx' CSS strings, one per value,
+    for use with Styler.apply(..., subset=[...]). Drop-in alternative to
+    Styler.background_gradient() that doesn't require matplotlib."""
+    c1, c2 = _hex_to_rgb(low), _hex_to_rgb(high)
+    vals = pd.to_numeric(series, errors="coerce")
+    vmin, vmax = vals.min(), vals.max()
+    styles = []
+    for v in vals:
+        if pd.isna(v) or vmax == vmin:
+            styles.append("")
+        else:
+            t = (v - vmin) / (vmax - vmin)
+            styles.append(f"background-color: {_lerp_color(c1, c2, t)}; color: #f3ecf0;")
+    return styles
 
 st.markdown(f"""
 <style>
@@ -691,7 +711,7 @@ if page == tab_labels[1 + _off]:
             "Net_Sales": "{:,.0f}", "Net_Qty": "{:,.0f}", "LY_Sales": "{:,.0f}", "TY_Sales": "{:,.0f}",
             "Primary": "{:,.0f}", "Tertiary": "{:,.0f}", "YoY %": "{:.1f}%",
             "Sell-Through %": "{:.1f}%", "Avg Sales / Outlet": "{:,.0f}",
-        }).background_gradient(subset=["YoY %"], cmap=DARK_CMAP),
+        }).apply(dark_gradient, subset=["YoY %"]),
         use_container_width=True, hide_index=True,
     )
 
@@ -746,7 +766,7 @@ if page == tab_labels[2 + _off]:
             "Net_Sales": "{:,.0f}", "LY_Sales": "{:,.0f}", "TY_Sales": "{:,.0f}",
             "Primary": "{:,.0f}", "Tertiary": "{:,.0f}", "YoY %": "{:.1f}%",
             "Sell-Through %": "{:.1f}%", "Stock_Cover": "{:.0f} days",
-        }).background_gradient(subset=["YoY %"], cmap=DARK_CMAP),
+        }).apply(dark_gradient, subset=["YoY %"]),
         use_container_width=True, hide_index=True, height=400,
     )
 
@@ -973,7 +993,7 @@ if page == tab_labels[7 + _off]:
     outliers = outliers[["Chain Name", "Outlet Name", "SKU Name", "Category", "Last Year Sales", "This Year Sales", "YoY Growth %"]]
     outliers = outliers.sort_values("YoY Growth %", ascending=False)
     st.dataframe(outliers.style.format({"Last Year Sales": "{:,.0f}", "This Year Sales": "{:,.0f}", "YoY Growth %": "{:.1f}%"})
-                 .background_gradient(subset=["YoY Growth %"], cmap=DARK_CMAP),
+                 .apply(dark_gradient, subset=["YoY Growth %"]),
                  use_container_width=True, hide_index=True, height=350)
 
     st.markdown("---")
