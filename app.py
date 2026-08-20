@@ -389,68 +389,184 @@ def delete_month(month_label):
     return master
 
 
-def read_uploaded_excel(source, sales_sheet="Sales Data", mrp_sheet="MRP Master"):
-    """
-    Read Excel data from:
-    - Streamlit uploaded .xlsx file
-    - Direct .xlsx URL
-    - Google Sheets sharing URL
-    """
-    if isinstance(source, str) and source.startswith(("http://", "https://")):
-        original_url = source.strip()
-        download_url = original_url
+def _is_excel_bytes(content: bytes) -> bool:
+    """Return True when content looks like XLSX or legacy XLS."""
+    if not content:
+        return False
+    return content[:2] == b"PK" or content[:4] == b"\xD0\xCF\x11\xE0"
 
-        # Convert a normal Google Sheets URL into an XLSX export URL.
-        if "docs.google.com/spreadsheets" in original_url:
-            match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", original_url)
-            if not match:
-                raise ValueError("Could not identify the Google Sheet ID from the URL.")
 
-            sheet_id = match.group(1)
-            download_url = (
-                f"https://docs.google.com/spreadsheets/d/"
-                f"{sheet_id}/export?format=xlsx"
+def _request_file(url, timeout=90):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/151.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+            "application/vnd.ms-excel,application/octet-stream,*/*"
+        ),
+    }
+    try:
+        return requests.get(
+            url,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=True,
+        )
+    except requests.RequestException as exc:
+        raise ValueError(f"Could not connect to the Excel link: {exc}") from exc
+
+
+def _sharepoint_download_candidates(url):
+    """Create download URLs for public SharePoint/OneDrive sharing links."""
+    from urllib.parse import quote
+
+    candidates = []
+
+    # Most public SharePoint links support download=1.
+    separator = "&" if "?" in url else "?"
+    candidates.append(url + separator + "download=1")
+
+    # SharePoint download.aspx endpoint.
+    if "sharepoint.com" in url.lower():
+        if "/_layouts/15/Doc.aspx" in url:
+            prefix = url.split("/_layouts/15/Doc.aspx", 1)[0]
+            candidates.append(
+                prefix
+                + "/_layouts/15/download.aspx?SourceUrl="
+                + quote(url, safe="")
             )
 
-        try:
-            response = requests.get(
-                download_url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/151.0.0.0 Safari/537.36"
-                    )
-                },
-                timeout=60,
-                allow_redirects=True,
-            )
-        except requests.RequestException as exc:
-            raise ValueError(f"Could not connect to the Excel link: {exc}") from exc
+        # Try the clean /:x:/r/... path without the viewer query string.
+        if "/:x:/r/" in url.lower():
+            base = url.split("?", 1)[0]
+            candidates.append(base + "?download=1")
+
+    # OneDrive short links commonly honor download=1.
+    if "1drv.ms" in url.lower() or "onedrive.live.com" in url.lower():
+        candidates.append(url + separator + "download=1")
+
+    return list(dict.fromkeys(candidates))
+
+
+def _download_excel_source(url):
+    """Download an Excel workbook from direct, SharePoint, OneDrive, or Google links."""
+    url = url.strip()
+
+    # -----------------------------
+    # Google Sheets
+    # -----------------------------
+    if "docs.google.com/spreadsheets" in url.lower():
+        import re
+
+        match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+        if not match:
+            raise ValueError("Could not identify the Google Sheet ID from the URL.")
+
+        sheet_id = match.group(1)
+        download_url = (
+            f"https://docs.google.com/spreadsheets/d/"
+            f"{sheet_id}/export?format=xlsx"
+        )
+
+        response = _request_file(download_url)
 
         if response.status_code != 200:
             raise ValueError(
-                f"Could not download Excel file. Server returned HTTP {response.status_code}. "
-                "Make sure the Google Sheet is publicly accessible or published to the web."
+                f"Google Sheets returned HTTP {response.status_code}. "
+                "Make sure the sheet is accessible without login."
             )
 
-        if not response.content:
-            raise ValueError("The link returned an empty file.")
+        if not _is_excel_bytes(response.content):
+            raise ValueError(
+                "Google returned a webpage instead of an XLSX workbook. "
+                "Make sure the sheet is publicly accessible."
+            )
 
-        source = BytesIO(response.content)
+        return BytesIO(response.content)
+
+    # -----------------------------
+    # Microsoft SharePoint / OneDrive
+    # -----------------------------
+    if (
+        "sharepoint.com" in url.lower()
+        or "1drv.ms" in url.lower()
+        or "onedrive.live.com" in url.lower()
+    ):
+        statuses = []
+
+        for candidate in _sharepoint_download_candidates(url):
+            response = _request_file(candidate)
+            statuses.append(response.status_code)
+
+            if response.status_code == 200 and _is_excel_bytes(response.content):
+                return BytesIO(response.content)
+
+        raise ValueError(
+            "Microsoft returned the Excel Online webpage instead of the "
+            f"workbook (HTTP attempts: {statuses}). "
+            "The SharePoint link must permit anonymous download. "
+            "In SharePoint choose Share → Link settings → Anyone with the link "
+            "→ Can view, then create/copy a fresh link."
+        )
+
+    # -----------------------------
+    # Generic direct Excel URL
+    # -----------------------------
+    response = _request_file(url)
+
+    if response.status_code != 200:
+        raise ValueError(
+            f"Could not download Excel file. Server returned HTTP "
+            f"{response.status_code}."
+        )
+
+    if not _is_excel_bytes(response.content):
+        content_type = response.headers.get("Content-Type", "unknown")
+        raise ValueError(
+            "The supplied URL did not return an Excel workbook. "
+            f"Content-Type: {content_type}. "
+            "Please use a direct .xlsx download link."
+        )
+
+    return BytesIO(response.content)
+
+
+def read_uploaded_excel(source, sales_sheet="Sales Data", mrp_sheet="MRP Master"):
+    """
+    Read Excel data from:
+    - Streamlit uploaded Excel file
+    - Direct .xlsx URL
+    - Public Microsoft SharePoint / OneDrive Excel link
+    - Google Sheets sharing URL
+    """
+    if isinstance(source, str) and source.strip().lower().startswith(
+        ("http://", "https://")
+    ):
+        source = _download_excel_source(source)
 
     try:
         xls = pd.ExcelFile(source)
     except Exception as exc:
         raise ValueError(
-            "The supplied link/file could not be opened as an Excel workbook. "
-            "For Google Sheets, use a normal sharing URL or a published sheet."
+            "The supplied file/link could not be opened as an Excel workbook."
         ) from exc
 
-    sales_sheet_actual = sales_sheet if sales_sheet in xls.sheet_names else xls.sheet_names[0]
+    if not xls.sheet_names:
+        raise ValueError("The Excel workbook contains no worksheets.")
+
+    sales_sheet_actual = (
+        sales_sheet
+        if sales_sheet in xls.sheet_names
+        else xls.sheet_names[0]
+    )
+
     df = pd.read_excel(xls, sheet_name=sales_sheet_actual)
 
     mrp_df = None
+
     if mrp_sheet in xls.sheet_names:
         mrp_df = pd.read_excel(xls, sheet_name=mrp_sheet)
     elif len(xls.sheet_names) > 1:
@@ -461,10 +577,16 @@ def read_uploaded_excel(source, sales_sheet="Sales Data", mrp_sheet="MRP Master"
         and "SKU Code" in mrp_df.columns
         and "MRP" in mrp_df.columns
     ):
-        df = df.merge(mrp_df[["SKU Code", "MRP"]], on="SKU Code", how="left")
+        if "MRP" in df.columns:
+            df = df.drop(columns=["MRP"])
+
+        df = df.merge(
+            mrp_df[["SKU Code", "MRP"]],
+            on="SKU Code",
+            how="left"
+        )
 
     return df
-
 
 def enrich(df):
     df = df.copy()
@@ -505,8 +627,7 @@ def fmt_inr(x):
 
 
 def fetch_live_excel(url, month_label=None):
-    """Read an Excel file directly from a public link (Google Sheets 'publish as .xlsx',
-    OneDrive/Dropbox direct-download link, or any other direct .xlsx URL)."""
+    """Read an Excel file from a direct link or public SharePoint/OneDrive link."""
     df = read_uploaded_excel(url)
     if month_label:
         df["Month"] = month_label
