@@ -56,6 +56,25 @@ section[data-testid="stSidebar"] {{
     background: #090C12;
     border-right: 1px solid {COLORS["border"]};
 }}
+section[data-testid="stSidebar"] {{
+    min-width: 320px !important;
+    width: 320px !important;
+    transform: none !important;
+    visibility: visible !important;
+}}
+section[data-testid="stSidebar"][aria-expanded="false"] {{
+    min-width: 320px !important;
+    width: 320px !important;
+    margin-left: 0 !important;
+    transform: none !important;
+    visibility: visible !important;
+}}
+[data-testid="stSidebarCollapseButton"] {{
+    display: none !important;
+}}
+section[data-testid="stSidebar"] > div:first-child {{
+    width: 320px !important;
+}}
 section[data-testid="stSidebar"] * {{ color: #E5E7EB; }}
 h1,h2,h3 {{ letter-spacing: -.02em; }}
 .mt-brand {{
