@@ -331,7 +331,7 @@ def style_fig(fig):
         paper_bgcolor=COLORS["bg"],
         plot_bgcolor=COLORS["bg"],
         font_color=COLORS["text"],
-        colorway=CHART_SEQUENCE,
+        colorway=PLUM_SEQUENCE,
         legend=dict(bgcolor="rgba(0,0,0,0)"),
         margin=dict(t=40, l=10, r=10, b=10),
     )
