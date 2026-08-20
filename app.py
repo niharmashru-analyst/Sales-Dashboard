@@ -3,12 +3,155 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import os
+from datetime import datetime
 
 st.set_page_config(page_title="MT Channel Sales Dashboard", layout="wide", page_icon="📊")
 
 # ============================================================
-# DATA LOADING
+# THEME — Black & Plum
 # ============================================================
+COLORS = {
+    "bg": "#0e0a0d",
+    "bg_secondary": "#181117",
+    "card": "#1f1620",
+    "border": "#3a2530",
+    "plum_deep": "#4a1f38",
+    "plum": "#7a3457",
+    "plum_light": "#a85c85",
+    "plum_accent": "#e0a3c4",
+    "text": "#f3ecf0",
+    "text_muted": "#b8a3ae",
+    "green": "#5fd68f",
+    "red": "#f0668c",
+    "amber": "#f0c169",
+}
+
+PLUM_SEQUENCE = ["#a85c85", "#e0a3c4", "#7a3457", "#c98cae", "#4a1f38",
+                  "#f0c169", "#5fd68f", "#f0668c", "#6b4a63", "#d1859f"]
+
+st.markdown(f"""
+<style>
+    .stApp {{
+        background-color: {COLORS['bg']};
+        color: {COLORS['text']};
+    }}
+    section[data-testid="stSidebar"] {{
+        background-color: {COLORS['bg_secondary']};
+        border-right: 1px solid {COLORS['border']};
+    }}
+    section[data-testid="stSidebar"] * {{
+        color: {COLORS['text']} !important;
+    }}
+    h1, h2, h3, h4, h5, h6 {{
+        color: {COLORS['text']} !important;
+        font-weight: 600;
+    }}
+    h1 {{
+        background: linear-gradient(90deg, {COLORS['plum_accent']}, {COLORS['plum_light']});
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        padding-bottom: 4px;
+    }}
+    p, span, label, div {{
+        color: {COLORS['text']};
+    }}
+    [data-testid="stMetric"] {{
+        background-color: {COLORS['card']};
+        border: 1px solid {COLORS['border']};
+        border-left: 3px solid {COLORS['plum_light']};
+        border-radius: 10px;
+        padding: 16px 18px;
+    }}
+    [data-testid="stMetricLabel"] {{
+        color: {COLORS['text_muted']} !important;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: {COLORS['plum_accent']} !important;
+        font-weight: 700;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 4px;
+        background-color: {COLORS['bg_secondary']};
+        border-radius: 10px;
+        padding: 6px;
+        border: 1px solid {COLORS['border']};
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        background-color: transparent;
+        border-radius: 8px;
+        color: {COLORS['text_muted']};
+        padding: 8px 16px;
+        font-weight: 500;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background-color: {COLORS['plum']} !important;
+        color: {COLORS['text']} !important;
+    }}
+    .stButton > button {{
+        background-color: {COLORS['plum']};
+        color: {COLORS['text']};
+        border: 1px solid {COLORS['plum_light']};
+        border-radius: 8px;
+        font-weight: 500;
+    }}
+    .stButton > button:hover {{
+        background-color: {COLORS['plum_light']};
+        border-color: {COLORS['plum_accent']};
+        color: {COLORS['bg']};
+    }}
+    .stDataFrame {{
+        border: 1px solid {COLORS['border']};
+        border-radius: 10px;
+        overflow: hidden;
+    }}
+    div[data-baseweb="select"] > div {{
+        background-color: {COLORS['card']};
+        border-color: {COLORS['border']};
+    }}
+    .stExpander {{
+        border: 1px solid {COLORS['border']} !important;
+        border-radius: 10px !important;
+        background-color: {COLORS['card']};
+    }}
+    hr {{
+        border-color: {COLORS['border']};
+    }}
+    .block-container {{
+        padding-top: 2rem;
+    }}
+    .stAlert {{
+        background-color: {COLORS['card']};
+        border: 1px solid {COLORS['border']};
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+
+def style_fig(fig):
+    fig.update_layout(
+        paper_bgcolor=COLORS["bg"],
+        plot_bgcolor=COLORS["bg"],
+        font_color=COLORS["text"],
+        colorway=PLUM_SEQUENCE,
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
+        margin=dict(t=40, l=10, r=10, b=10),
+    )
+    fig.update_xaxes(gridcolor=COLORS["border"], zerolinecolor=COLORS["border"])
+    fig.update_yaxes(gridcolor=COLORS["border"], zerolinecolor=COLORS["border"])
+    return fig
+
+
+# ============================================================
+# PERSISTENT MONTHLY DATA STORE
+# ============================================================
+DATA_DIR = "data"
+MASTER_PATH = os.path.join(DATA_DIR, "mt_master_data.csv")
+os.makedirs(DATA_DIR, exist_ok=True)
+
 REQUIRED_COLS = [
     "Chain Code", "Chain Name", "Outlet Code", "Outlet Name", "SKU Code",
     "SKU Name", "Category", "Net Qty", "Net Sales", "Last Year Sales",
@@ -16,43 +159,60 @@ REQUIRED_COLS = [
 ]
 
 
-@st.cache_data(show_spinner=False)
-def load_from_file(file_bytes_or_path, sales_sheet="Sales Data", mrp_sheet="MRP Master"):
-    xls = pd.ExcelFile(file_bytes_or_path)
+def validate(df):
+    return [c for c in REQUIRED_COLS if c not in df.columns]
+
+
+def load_master():
+    if os.path.exists(MASTER_PATH):
+        return pd.read_csv(MASTER_PATH)
+    return pd.DataFrame()
+
+
+def save_master(df):
+    df.to_csv(MASTER_PATH, index=False)
+
+
+def add_month_to_master(new_df, month_label):
+    new_df = new_df.copy()
+    new_df["Month"] = month_label
+    new_df["Uploaded At"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    master = load_master()
+    if not master.empty:
+        master = master[master["Month"] != month_label]  # replace if re-uploaded
+        master = pd.concat([master, new_df], ignore_index=True)
+    else:
+        master = new_df
+    save_master(master)
+    return master
+
+
+def delete_month(month_label):
+    master = load_master()
+    master = master[master["Month"] != month_label]
+    save_master(master)
+    return master
+
+
+def read_uploaded_excel(uploaded, sales_sheet="Sales Data", mrp_sheet="MRP Master"):
+    xls = pd.ExcelFile(uploaded)
     sales_sheet_actual = sales_sheet if sales_sheet in xls.sheet_names else xls.sheet_names[0]
     df = pd.read_excel(xls, sheet_name=sales_sheet_actual)
-
     mrp_df = None
     if mrp_sheet in xls.sheet_names:
         mrp_df = pd.read_excel(xls, sheet_name=mrp_sheet)
     elif len(xls.sheet_names) > 1:
         mrp_df = pd.read_excel(xls, sheet_name=xls.sheet_names[1])
-
     if mrp_df is not None and "SKU Code" in mrp_df.columns and "MRP" in mrp_df.columns:
         df = df.merge(mrp_df[["SKU Code", "MRP"]], on="SKU Code", how="left")
     return df
 
 
-@st.cache_data(show_spinner=False)
-def load_from_url(url):
-    # Works for direct Excel links or a Google Sheets "export?format=xlsx" link
-    return load_from_file(url)
-
-
-def validate(df):
-    missing = [c for c in REQUIRED_COLS if c not in df.columns]
-    return missing
-
-
 def enrich(df):
     df = df.copy()
-    df["Net Qty"] = pd.to_numeric(df["Net Qty"], errors="coerce").fillna(0)
-    df["Net Sales"] = pd.to_numeric(df["Net Sales"], errors="coerce").fillna(0)
-    df["Last Year Sales"] = pd.to_numeric(df["Last Year Sales"], errors="coerce").fillna(0)
-    df["This Year Sales"] = pd.to_numeric(df["This Year Sales"], errors="coerce").fillna(0)
-    df["Primary Sales"] = pd.to_numeric(df["Primary Sales"], errors="coerce").fillna(0)
-    df["Tertiary Sales"] = pd.to_numeric(df["Tertiary Sales"], errors="coerce").fillna(0)
-    df["Closing Stock"] = pd.to_numeric(df["Closing Stock"], errors="coerce").fillna(0)
+    for c in ["Net Qty", "Net Sales", "Last Year Sales", "This Year Sales",
+              "Primary Sales", "Tertiary Sales", "Closing Stock"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
     df["YoY Growth %"] = np.where(
         df["Last Year Sales"] > 0,
@@ -87,66 +247,79 @@ def fmt_inr(x):
 
 
 # ============================================================
-# SIDEBAR — DATA SOURCE
+# SIDEBAR — MONTHLY DATA MANAGER
 # ============================================================
 st.sidebar.title("📊 MT Sales Dashboard")
-st.sidebar.markdown("### Data Source")
-source_mode = st.sidebar.radio(
-    "Choose data source",
-    ["Use sample data", "Upload Excel file", "Live link (Google Sheet / OneDrive)"],
-    index=0,
-)
 
-df_raw = None
-load_error = None
+with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
+    st.caption("Upload each month's extract here. It's added to a running history stored on disk — "
+               "old months are kept, not overwritten.")
+    month_pick = st.text_input("Month label (e.g. Aug 2026)", value=datetime.now().strftime("%b %Y"))
+    monthly_file = st.file_uploader("Upload this month's .xlsx", type=["xlsx"], key="monthly_upload")
 
-if source_mode == "Use sample data":
-    try:
-        df_raw = load_from_file("MT_Sales_Dummy_Data.xlsx")
-    except Exception as e:
-        load_error = str(e)
-
-elif source_mode == "Upload Excel file":
-    uploaded = st.sidebar.file_uploader("Upload your .xlsx file", type=["xlsx"])
-    if uploaded is not None:
+    if monthly_file is not None and st.button("➕ Add to database"):
         try:
-            df_raw = load_from_file(uploaded)
+            new_df = read_uploaded_excel(monthly_file)
+            missing = validate(new_df)
+            if missing:
+                st.error(f"Missing required columns: {missing}")
+            elif not month_pick.strip():
+                st.error("Please give this upload a month label first.")
+            else:
+                add_month_to_master(new_df, month_pick.strip())
+                st.success(f"Added {len(new_df):,} rows for '{month_pick.strip()}' to the database.")
+                st.cache_data.clear()
         except Exception as e:
-            load_error = str(e)
+            st.error(f"Could not process file: {e}")
+
+    st.markdown("---")
+    master_preview = load_master()
+    if not master_preview.empty:
+        month_summary = master_preview.groupby("Month").size().reset_index(name="Rows")
+        st.caption("**Months currently stored:**")
+        st.dataframe(month_summary, use_container_width=True, hide_index=True)
+
+        del_month = st.selectbox("Remove a month", ["—"] + sorted(master_preview["Month"].unique().tolist()))
+        if del_month != "—" and st.button("🗑️ Delete this month's data"):
+            delete_month(del_month)
+            st.success(f"Deleted '{del_month}'.")
+            st.cache_data.clear()
+            st.rerun()
+
+        csv_bytes = master_preview.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download full history (backup)", csv_bytes,
+                            file_name="mt_master_data_backup.csv", mime="text/csv")
+        st.caption("⚠️ If this app is hosted on a platform with ephemeral storage (e.g. Streamlit "
+                   "Community Cloud), the file above resets on redeploy/restart. Download a backup "
+                   "regularly, and use 'Restore from backup' below if that happens.")
+
+        restore_file = st.file_uploader("Restore from a backup .csv", type=["csv"], key="restore_upload")
+        if restore_file is not None and st.button("♻️ Restore this backup"):
+            restored = pd.read_csv(restore_file)
+            save_master(restored)
+            st.success("Restored from backup.")
+            st.cache_data.clear()
+            st.rerun()
     else:
-        st.sidebar.info("Upload a file, or switch to 'Use sample data'.")
+        st.info("No data stored yet — upload your first month's file above.")
 
-elif source_mode == "Live link (Google Sheet / OneDrive)":
-    st.sidebar.caption(
-        "Paste a direct download link. For Google Sheets: File → Share → Publish to web → "
-        "choose xlsx, then paste that link here."
-    )
-    url = st.sidebar.text_input("Excel file URL")
-    if url:
-        try:
-            df_raw = load_from_url(url)
-        except Exception as e:
-            load_error = str(e)
+# ============================================================
+# LOAD DATA FROM STORE
+# ============================================================
+master_df = load_master()
 
-if st.sidebar.button("🔄 Refresh data"):
-    st.cache_data.clear()
-    st.rerun()
-
-if load_error:
-    st.error(f"Could not load data: {load_error}")
+if master_df.empty:
+    st.title("Modern Trade (MT) Channel — Sales & Distribution Dashboard")
+    st.info("👈 No data yet. Open **'Add / Manage Monthly Data'** in the sidebar and upload your first "
+            "month's Excel file to get started.")
     st.stop()
 
-if df_raw is None:
-    st.info("👈 Choose a data source in the sidebar to load the dashboard.")
-    st.stop()
-
-missing_cols = validate(df_raw)
+missing_cols = validate(master_df)
 if missing_cols:
-    st.error(f"Your file is missing required columns: {missing_cols}")
-    st.caption(f"Required columns: {REQUIRED_COLS}")
+    st.error(f"Stored data is missing required columns: {missing_cols}")
     st.stop()
 
-df = enrich(df_raw)
+df = enrich(master_df)
 has_mrp = "MRP" in df.columns and df["MRP"].notna().any()
 has_chain_type = "Chain Type" in df.columns and df["Chain Type"].notna().any()
 
@@ -154,9 +327,13 @@ has_chain_type = "Chain Type" in df.columns and df["Chain Type"].notna().any()
 # SIDEBAR — FILTERS
 # ============================================================
 st.sidebar.markdown("### Filters")
-df_f = df
+
+months_sorted = sorted(df["Month"].unique().tolist())
+months_sel = st.sidebar.multiselect("Month", months_sorted, default=months_sorted)
+df_f = df[df["Month"].isin(months_sel)] if months_sel else df
+
 if has_chain_type:
-    ctype_sel = st.sidebar.multiselect("Chain Type", sorted(df["Chain Type"].unique()), default=None)
+    ctype_sel = st.sidebar.multiselect("Chain Type", sorted(df_f["Chain Type"].unique()), default=None)
     df_f = df_f[df_f["Chain Type"].isin(ctype_sel)] if ctype_sel else df_f
 
 chains_sel = st.sidebar.multiselect("Chain", sorted(df_f["Chain Name"].unique()), default=None)
@@ -175,7 +352,7 @@ if df_f.empty:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.caption(f"Rows loaded: {len(df):,} | After filters: {len(df_f):,}")
+st.sidebar.caption(f"Rows loaded: {len(df):,} | After filters: {len(df_f):,} | Months stored: {len(months_sorted)}")
 
 # ============================================================
 # HEADER
@@ -196,8 +373,6 @@ tab_labels += [
     "🔍 Diagnostics & Exceptions",
 ]
 tabs = st.tabs(tab_labels)
-
-# Index offset: if Chain Type comparison tab exists, all subsequent indices shift by 1
 _off = 1 if has_chain_type else 0
 
 # ------------------------------------------------------------
@@ -226,20 +401,20 @@ with tabs[0]:
         chain_sales = df_f.groupby("Chain Name", as_index=False)["Net Sales"].sum().sort_values("Net Sales", ascending=False)
         fig = px.bar(chain_sales, x="Chain Name", y="Net Sales", text_auto=".2s", color="Chain Name")
         fig.update_layout(showlegend=False, yaxis_title="Net Sales")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True)
     with col2:
         st.subheader("Sales Mix by Category")
         cat_sales = df_f.groupby("Category", as_index=False)["Net Sales"].sum()
         fig = px.pie(cat_sales, names="Category", values="Net Sales", hole=0.45)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True)
 
     col3, col4 = st.columns(2)
     with col3:
-        st.subheader("This Year vs Last Year")
-        yr_df = pd.DataFrame({"Period": ["Last Year", "This Year"], "Sales": [ly_total, ty_total]})
-        fig = px.bar(yr_df, x="Period", y="Sales", text_auto=".2s", color="Period",
-                     color_discrete_map={"Last Year": "#94a3b8", "This Year": "#2563eb"})
-        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("Monthly Sales Trend")
+        month_trend = df_f.groupby("Month", as_index=False)["Net Sales"].sum()
+        fig = px.line(month_trend, x="Month", y="Net Sales", markers=True)
+        fig.update_traces(line_color=COLORS["plum_accent"])
+        st.plotly_chart(style_fig(fig), use_container_width=True)
     with col4:
         st.subheader("Top 5 / Bottom 5 Chains by YoY Growth")
         chain_yoy = df_f.groupby("Chain Name").agg(
@@ -248,25 +423,20 @@ with tabs[0]:
         chain_yoy["YoY %"] = (chain_yoy["TY"] - chain_yoy["LY"]) / chain_yoy["LY"] * 100
         chain_yoy = chain_yoy.sort_values("YoY %", ascending=False)
         fig = px.bar(chain_yoy, x="YoY %", y="Chain Name", orientation="h", color="YoY %",
-                     color_continuous_scale="RdYlGn")
-        st.plotly_chart(fig, use_container_width=True)
+                     color_continuous_scale=["#f0668c", "#3a2530", "#5fd68f"])
+        st.plotly_chart(style_fig(fig), use_container_width=True)
 
 # ------------------------------------------------------------
-# TAB (optional): CHAIN TYPE COMPARISON (Grocery vs Beauty/Pharma)
+# TAB (optional): CHAIN TYPE COMPARISON
 # ------------------------------------------------------------
 if has_chain_type:
     with tabs[1]:
         st.subheader("Grocery MT vs Beauty & Pharma MT — Side by Side")
-
         ct_tbl = df_f.groupby("Chain Type").agg(
-            Chains=("Chain Code", "nunique"),
-            Outlets=("Outlet Code", "nunique"),
-            Net_Sales=("Net Sales", "sum"),
-            Net_Qty=("Net Qty", "sum"),
-            LY_Sales=("Last Year Sales", "sum"),
-            TY_Sales=("This Year Sales", "sum"),
-            Primary=("Primary Sales", "sum"),
-            Tertiary=("Tertiary Sales", "sum"),
+            Chains=("Chain Code", "nunique"), Outlets=("Outlet Code", "nunique"),
+            Net_Sales=("Net Sales", "sum"), Net_Qty=("Net Qty", "sum"),
+            LY_Sales=("Last Year Sales", "sum"), TY_Sales=("This Year Sales", "sum"),
+            Primary=("Primary Sales", "sum"), Tertiary=("Tertiary Sales", "sum"),
             Closing_Stock=("Closing Stock", "sum"),
         ).reset_index()
         ct_tbl["YoY %"] = (ct_tbl["TY_Sales"] - ct_tbl["LY_Sales"]) / ct_tbl["LY_Sales"] * 100
@@ -276,7 +446,6 @@ if has_chain_type:
             ct_disc = df_f.groupby("Chain Type")["Discount %"].mean()
             ct_tbl["Avg Discount %"] = ct_tbl["Chain Type"].map(ct_disc)
 
-        # KPI cards side by side
         cols = st.columns(len(ct_tbl))
         for i, row in ct_tbl.iterrows():
             with cols[i]:
@@ -302,31 +471,29 @@ if has_chain_type:
             st.subheader("Net Sales: Grocery vs Beauty/Pharma")
             fig = px.bar(ct_tbl, x="Chain Type", y="Net_Sales", color="Chain Type", text_auto=".2s")
             fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(style_fig(fig), use_container_width=True)
         with col2:
             st.subheader("YoY Growth % Comparison")
             fig = px.bar(ct_tbl, x="Chain Type", y="YoY %", color="Chain Type", text_auto=".1f")
             fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(style_fig(fig), use_container_width=True)
 
         col3, col4 = st.columns(2)
         with col3:
             st.subheader("Sell-Through Rate Comparison")
             fig = px.bar(ct_tbl, x="Chain Type", y="Sell-Through %", color="Chain Type", text_auto=".1f")
-            fig.add_hline(y=100, line_dash="dash", line_color="black")
+            fig.add_hline(y=100, line_dash="dash", line_color=COLORS["text_muted"])
             fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(style_fig(fig), use_container_width=True)
         with col4:
             st.subheader("Category Mix by Chain Type")
             mix = df_f.groupby(["Chain Type", "Category"])["Net Sales"].sum().reset_index()
             fig = px.bar(mix, x="Chain Type", y="Net Sales", color="Category", barmode="stack")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(style_fig(fig), use_container_width=True)
 
         st.subheader("Same SKU, Different Channel — Performance Comparison")
         st.caption("Pick a SKU sold in both chain types to compare how it performs across Grocery vs Beauty/Pharma MT.")
-        common_skus = (
-            df_f.groupby("SKU Name")["Chain Type"].nunique()
-        )
+        common_skus = df_f.groupby("SKU Name")["Chain Type"].nunique()
         common_skus = common_skus[common_skus > 1].index.tolist()
         if common_skus:
             sku_pick2 = st.selectbox("Select SKU (sold in both channel types)", sorted(common_skus), key="ct_sku_pick")
@@ -346,13 +513,9 @@ if has_chain_type:
 with tabs[1 + _off]:
     st.subheader("Chain-wise Scorecard")
     chain_tbl = df_f.groupby(["Chain Code", "Chain Name"]).agg(
-        Outlets=("Outlet Code", "nunique"),
-        Net_Sales=("Net Sales", "sum"),
-        Net_Qty=("Net Qty", "sum"),
-        LY_Sales=("Last Year Sales", "sum"),
-        TY_Sales=("This Year Sales", "sum"),
-        Primary=("Primary Sales", "sum"),
-        Tertiary=("Tertiary Sales", "sum"),
+        Outlets=("Outlet Code", "nunique"), Net_Sales=("Net Sales", "sum"), Net_Qty=("Net Qty", "sum"),
+        LY_Sales=("Last Year Sales", "sum"), TY_Sales=("This Year Sales", "sum"),
+        Primary=("Primary Sales", "sum"), Tertiary=("Tertiary Sales", "sum"),
     ).reset_index()
     chain_tbl["YoY %"] = (chain_tbl["TY_Sales"] - chain_tbl["LY_Sales"]) / chain_tbl["LY_Sales"] * 100
     chain_tbl["Sell-Through %"] = chain_tbl["Tertiary"] / chain_tbl["Primary"] * 100
@@ -364,7 +527,7 @@ with tabs[1 + _off]:
             "Net_Sales": "{:,.0f}", "Net_Qty": "{:,.0f}", "LY_Sales": "{:,.0f}", "TY_Sales": "{:,.0f}",
             "Primary": "{:,.0f}", "Tertiary": "{:,.0f}", "YoY %": "{:.1f}%",
             "Sell-Through %": "{:.1f}%", "Avg Sales / Outlet": "{:,.0f}",
-        }).background_gradient(subset=["YoY %"], cmap="RdYlGn"),
+        }).background_gradient(subset=["YoY %"], cmap="RdPu"),
         use_container_width=True, hide_index=True,
     )
 
@@ -375,15 +538,15 @@ with tabs[1 + _off]:
             chain_tbl, x="Net_Sales", y="YoY %", size="Outlets", color="Chain Name",
             text="Chain Name", labels={"Net_Sales": "Net Sales (Value)", "YoY %": "YoY Growth %"},
         )
-        fig.add_hline(y=chain_tbl["YoY %"].mean(), line_dash="dash", line_color="gray")
-        fig.add_vline(x=chain_tbl["Net_Sales"].mean(), line_dash="dash", line_color="gray")
+        fig.add_hline(y=chain_tbl["YoY %"].mean(), line_dash="dash", line_color=COLORS["text_muted"])
+        fig.add_vline(x=chain_tbl["Net_Sales"].mean(), line_dash="dash", line_color=COLORS["text_muted"])
         fig.update_traces(textposition="top center")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True)
     with col2:
         st.subheader("Category Penetration by Chain")
         pen = df_f.groupby(["Chain Name", "Category"])["Net Sales"].sum().reset_index()
         fig = px.treemap(pen, path=["Chain Name", "Category"], values="Net Sales")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True)
 
 # ------------------------------------------------------------
 # TAB 3: OUTLET PERFORMANCE
@@ -391,13 +554,9 @@ with tabs[1 + _off]:
 with tabs[2 + _off]:
     st.subheader("Outlet Scorecard")
     out_tbl = df_f.groupby(["Chain Name", "Outlet Code", "Outlet Name"]).agg(
-        Net_Sales=("Net Sales", "sum"),
-        LY_Sales=("Last Year Sales", "sum"),
-        TY_Sales=("This Year Sales", "sum"),
-        Primary=("Primary Sales", "sum"),
-        Tertiary=("Tertiary Sales", "sum"),
-        Stock_Cover=("Stock Cover (Days)", "mean"),
-        SKUs=("SKU Code", "nunique"),
+        Net_Sales=("Net Sales", "sum"), LY_Sales=("Last Year Sales", "sum"), TY_Sales=("This Year Sales", "sum"),
+        Primary=("Primary Sales", "sum"), Tertiary=("Tertiary Sales", "sum"),
+        Stock_Cover=("Stock Cover (Days)", "mean"), SKUs=("SKU Code", "nunique"),
     ).reset_index()
     out_tbl["YoY %"] = (out_tbl["TY_Sales"] - out_tbl["LY_Sales"]) / out_tbl["LY_Sales"] * 100
     out_tbl["Sell-Through %"] = out_tbl["Tertiary"] / out_tbl["Primary"] * 100
@@ -423,7 +582,7 @@ with tabs[2 + _off]:
             "Net_Sales": "{:,.0f}", "LY_Sales": "{:,.0f}", "TY_Sales": "{:,.0f}",
             "Primary": "{:,.0f}", "Tertiary": "{:,.0f}", "YoY %": "{:.1f}%",
             "Sell-Through %": "{:.1f}%", "Stock_Cover": "{:.0f} days",
-        }).background_gradient(subset=["YoY %"], cmap="RdYlGn"),
+        }).background_gradient(subset=["YoY %"], cmap="RdPu"),
         use_container_width=True, hide_index=True, height=400,
     )
 
@@ -431,7 +590,7 @@ with tabs[2 + _off]:
     seg_count = out_tbl["Segment"].value_counts().reset_index()
     seg_count.columns = ["Segment", "Outlets"]
     fig = px.bar(seg_count, x="Segment", y="Outlets", color="Segment", text_auto=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(style_fig(fig), use_container_width=True)
 
 # ------------------------------------------------------------
 # TAB 4: CATEGORY & SKU
@@ -440,8 +599,7 @@ with tabs[3 + _off]:
     st.subheader("Category Performance")
     cat_tbl = df_f.groupby("Category").agg(
         Net_Sales=("Net Sales", "sum"), LY_Sales=("Last Year Sales", "sum"),
-        TY_Sales=("This Year Sales", "sum"), Primary=("Primary Sales", "sum"),
-        Tertiary=("Tertiary Sales", "sum"),
+        TY_Sales=("This Year Sales", "sum"), Primary=("Primary Sales", "sum"), Tertiary=("Tertiary Sales", "sum"),
     ).reset_index()
     cat_tbl["YoY %"] = (cat_tbl["TY_Sales"] - cat_tbl["LY_Sales"]) / cat_tbl["LY_Sales"] * 100
     cat_tbl["Sell-Through %"] = cat_tbl["Tertiary"] / cat_tbl["Primary"] * 100
@@ -452,30 +610,28 @@ with tabs[3 + _off]:
             "Net_Sales": "{:,.0f}", "LY_Sales": "{:,.0f}", "TY_Sales": "{:,.0f}",
             "Primary": "{:,.0f}", "Tertiary": "{:,.0f}", "YoY %": "{:.1f}%",
             "Sell-Through %": "{:.1f}%", "Share %": "{:.1f}%",
-        }),
-        use_container_width=True, hide_index=True,
+        }), use_container_width=True, hide_index=True,
     )
 
     st.markdown("---")
     st.subheader("SKU Pareto (80/20) — Top SKUs by Sales")
     sku_tbl = df_f.groupby(["SKU Code", "SKU Name", "Category"]).agg(
         Net_Sales=("Net Sales", "sum"), Net_Qty=("Net Qty", "sum"),
-        LY_Sales=("Last Year Sales", "sum"), TY_Sales=("This Year Sales", "sum"),
-        Outlets=("Outlet Code", "nunique"),
+        LY_Sales=("Last Year Sales", "sum"), TY_Sales=("This Year Sales", "sum"), Outlets=("Outlet Code", "nunique"),
     ).reset_index().sort_values("Net_Sales", ascending=False)
     sku_tbl["YoY %"] = (sku_tbl["TY_Sales"] - sku_tbl["LY_Sales"]) / sku_tbl["LY_Sales"] * 100
     sku_tbl["Cum Share %"] = sku_tbl["Net_Sales"].cumsum() / sku_tbl["Net_Sales"].sum() * 100
 
     fig = go.Figure()
-    fig.add_bar(x=sku_tbl["SKU Name"], y=sku_tbl["Net_Sales"], name="Net Sales")
+    fig.add_bar(x=sku_tbl["SKU Name"], y=sku_tbl["Net_Sales"], name="Net Sales", marker_color=COLORS["plum_light"])
     fig.add_trace(go.Scatter(x=sku_tbl["SKU Name"], y=sku_tbl["Cum Share %"], name="Cumulative %",
-                              yaxis="y2", line=dict(color="red")))
+                              yaxis="y2", line=dict(color=COLORS["amber"])))
     fig.update_layout(
         yaxis=dict(title="Net Sales"),
         yaxis2=dict(title="Cumulative %", overlaying="y", side="right", range=[0, 105]),
         xaxis=dict(tickangle=-45), height=450,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(style_fig(fig), use_container_width=True)
 
     st.subheader("SKU Movement: Growing vs Declining")
     def move_seg(v):
@@ -486,9 +642,10 @@ with tabs[3 + _off]:
     sku_tbl["Movement"] = sku_tbl["YoY %"].apply(move_seg)
     move_count = sku_tbl["Movement"].value_counts().reset_index()
     move_count.columns = ["Movement", "SKU Count"]
-    fig = px.pie(move_count, names="Movement", values="SKU Count", hole=0.45,
-                 color="Movement", color_discrete_map={"Growing": "#22c55e", "Declining": "#ef4444", "Stable": "#94a3b8", "No LY data": "#e2e8f0"})
-    st.plotly_chart(fig, use_container_width=True)
+    fig = px.pie(move_count, names="Movement", values="SKU Count", hole=0.45, color="Movement",
+                 color_discrete_map={"Growing": COLORS["green"], "Declining": COLORS["red"],
+                                      "Stable": COLORS["text_muted"], "No LY data": COLORS["border"]})
+    st.plotly_chart(style_fig(fig), use_container_width=True)
 
     with st.expander("Full SKU table"):
         st.dataframe(sku_tbl.style.format({
@@ -497,7 +654,7 @@ with tabs[3 + _off]:
         }), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------
-# TAB 5: DISTRIBUTION HEALTH (Primary vs Tertiary)
+# TAB 5: DISTRIBUTION HEALTH
 # ------------------------------------------------------------
 with tabs[4 + _off]:
     st.subheader("Primary vs Tertiary Sales")
@@ -518,17 +675,17 @@ with tabs[4 + _off]:
         chain_st = df_f.groupby("Chain Name").agg(P=("Primary Sales", "sum"), T=("Tertiary Sales", "sum")).reset_index()
         chain_st["Sell-Through %"] = chain_st["T"] / chain_st["P"] * 100
         fig = px.bar(chain_st.sort_values("Sell-Through %"), x="Sell-Through %", y="Chain Name",
-                     orientation="h", color="Sell-Through %", color_continuous_scale="RdYlGn")
-        fig.add_vline(x=100, line_dash="dash", line_color="black")
-        st.plotly_chart(fig, use_container_width=True)
+                     orientation="h", color="Sell-Through %", color_continuous_scale=["#f0668c", "#3a2530", "#5fd68f"])
+        fig.add_vline(x=100, line_dash="dash", line_color=COLORS["text_muted"])
+        st.plotly_chart(style_fig(fig), use_container_width=True)
     with col2:
         st.subheader("Sell-Through Rate by Category")
         cat_st = df_f.groupby("Category").agg(P=("Primary Sales", "sum"), T=("Tertiary Sales", "sum")).reset_index()
         cat_st["Sell-Through %"] = cat_st["T"] / cat_st["P"] * 100
         fig = px.bar(cat_st.sort_values("Sell-Through %"), x="Sell-Through %", y="Category",
-                     orientation="h", color="Sell-Through %", color_continuous_scale="RdYlGn")
-        fig.add_vline(x=100, line_dash="dash", line_color="black")
-        st.plotly_chart(fig, use_container_width=True)
+                     orientation="h", color="Sell-Through %", color_continuous_scale=["#f0668c", "#3a2530", "#5fd68f"])
+        fig.add_vline(x=100, line_dash="dash", line_color=COLORS["text_muted"])
+        st.plotly_chart(style_fig(fig), use_container_width=True)
 
     st.subheader("⚠️ Channel Stuffing Watch — High Primary, Low Sell-Through")
     st.caption("Outlets/SKUs where a lot of stock is being pushed in but not sold out. Investigate for over-supply.")
@@ -555,15 +712,15 @@ with tabs[5 + _off]:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Stock Cover Distribution")
-        fig = px.histogram(df_f, x="Stock Cover (Days)", nbins=30)
-        fig.add_vline(x=60, line_dash="dash", line_color="red", annotation_text="60-day threshold")
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.histogram(df_f, x="Stock Cover (Days)", nbins=30, color_discrete_sequence=[COLORS["plum_light"]])
+        fig.add_vline(x=60, line_dash="dash", line_color=COLORS["red"], annotation_text="60-day threshold")
+        st.plotly_chart(style_fig(fig), use_container_width=True)
     with col2:
         st.subheader("Closing Stock by Category")
         stock_cat = df_f.groupby("Category", as_index=False)["Closing Stock"].sum()
         fig = px.bar(stock_cat.sort_values("Closing Stock", ascending=False), x="Category", y="Closing Stock", color="Category")
         fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True)
 
     st.subheader("🔴 Dead Stock Report — Low/No Sell-out, Stock Sitting")
     dead = df_f[(df_f["Tertiary Sales"] < df_f["Tertiary Sales"].quantile(0.1)) & (df_f["Closing Stock"] > 0)]
@@ -603,38 +760,34 @@ with tabs[6 + _off]:
         with col1:
             st.subheader("Discount % by Chain")
             chain_disc = df_f.groupby("Chain Name", as_index=False)["Discount %"].mean().sort_values("Discount %", ascending=False)
-            fig = px.bar(chain_disc, x="Chain Name", y="Discount %", color="Discount %", color_continuous_scale="Reds")
-            st.plotly_chart(fig, use_container_width=True)
+            fig = px.bar(chain_disc, x="Chain Name", y="Discount %", color="Discount %",
+                         color_continuous_scale=["#3a2530", "#e0a3c4"])
+            st.plotly_chart(style_fig(fig), use_container_width=True)
         with col2:
             st.subheader("Discount % by Category")
             cat_disc = df_f.groupby("Category", as_index=False)["Discount %"].mean().sort_values("Discount %", ascending=False)
-            fig = px.bar(cat_disc, x="Category", y="Discount %", color="Discount %", color_continuous_scale="Reds")
-            st.plotly_chart(fig, use_container_width=True)
+            fig = px.bar(cat_disc, x="Category", y="Discount %", color="Discount %",
+                         color_continuous_scale=["#3a2530", "#e0a3c4"])
+            st.plotly_chart(style_fig(fig), use_container_width=True)
 
         st.subheader("Price-Volume-Mix (PVM) — YoY Sales Variance Bridge")
-        st.caption("Decomposes the YoY sales change into Volume effect, Mix effect, and Discount effect (since MRP is static).")
+        st.caption("Decomposes the YoY sales change into Volume+Mix effect and Discount effect (since MRP is static).")
         ly, ty = df_f["Last Year Sales"].sum(), df_f["This Year Sales"].sum()
-        total_delta = ty - ly
-        # Simplified attribution using qty-weighted MRP potential vs actual
         potential_ty_at_mrp = (df_f["Net Qty"] * df_f["MRP"]).sum()
         discount_effect = potential_ty_at_mrp - ty
-        volume_mix_effect = potential_ty_at_mrp - ly - discount_effect + discount_effect  # placeholder structure below
-
-        # Cleaner bridge: LY -> (LY * volume growth) -> at-MRP TY -> actual TY (post-discount)
-        qty_ly_equiv = ly / df_f["Realized Price"].replace(0, np.nan).mean() if df_f["Realized Price"].mean() else np.nan
         volume_effect = potential_ty_at_mrp - ly if pd.notna(potential_ty_at_mrp) else 0
         fig = go.Figure(go.Waterfall(
             orientation="v",
             measure=["absolute", "relative", "relative", "total"],
             x=["Last Year Sales", "Volume + Mix Effect", "Discount Effect", "This Year Sales"],
             y=[ly, volume_effect, -discount_effect, ty],
-            connector={"line": {"color": "gray"}},
-            decreasing={"marker": {"color": "#ef4444"}},
-            increasing={"marker": {"color": "#22c55e"}},
-            totals={"marker": {"color": "#2563eb"}},
+            connector={"line": {"color": COLORS["border"]}},
+            decreasing={"marker": {"color": COLORS["red"]}},
+            increasing={"marker": {"color": COLORS["green"]}},
+            totals={"marker": {"color": COLORS["plum_light"]}},
         ))
         fig.update_layout(height=450, yaxis_title="Net Sales (₹)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True)
         st.caption(
             "Volume + Mix Effect = extra sales if everything sold at full MRP (captures more units sold and "
             "shift toward higher/lower-MRP SKUs). Discount Effect = value given up by selling below MRP."
@@ -656,7 +809,7 @@ with tabs[7 + _off]:
     outliers = outliers[["Chain Name", "Outlet Name", "SKU Name", "Category", "Last Year Sales", "This Year Sales", "YoY Growth %"]]
     outliers = outliers.sort_values("YoY Growth %", ascending=False)
     st.dataframe(outliers.style.format({"Last Year Sales": "{:,.0f}", "This Year Sales": "{:,.0f}", "YoY Growth %": "{:.1f}%"})
-                 .background_gradient(subset=["YoY Growth %"], cmap="RdYlGn"),
+                 .background_gradient(subset=["YoY Growth %"], cmap="RdPu"),
                  use_container_width=True, hide_index=True, height=350)
 
     st.markdown("---")
@@ -686,4 +839,4 @@ with tabs[7 + _off]:
                      use_container_width=True, hide_index=True, height=250)
 
 st.markdown("---")
-st.caption("Built for MT channel reporting. Update your Excel and use the sidebar Upload/Refresh to see new numbers.")
+st.caption("Built for MT channel reporting. Add each month's file via the sidebar to keep history growing.")
