@@ -27,8 +27,20 @@ COLORS = {
     "amber": "#f0c169",
 }
 
-PLUM_SEQUENCE = ["#a85c85", "#e0a3c4", "#7a3457", "#c98cae", "#4a1f38",
-                  "#f0c169", "#5fd68f", "#f0668c", "#6b4a63", "#d1859f"]
+PLUM_SEQUENCE = ["#e0a3c4", "#a85c85", "#f0c169", "#7a3457", "#5fd68f",
+                  "#c98cae", "#f0668c", "#4a1f38", "#8ecae6", "#d1859f"]
+
+import plotly.io as pio
+pio.templates.default = "plotly_dark"
+px.defaults.color_discrete_sequence = PLUM_SEQUENCE
+px.defaults.color_continuous_scale = ["#3a2530", "#7a3457", "#a85c85", "#e0a3c4"]
+
+# Dark-friendly gradient for dataframe cell highlighting (no near-white steps,
+# unlike matplotlib's built-in RdPu/RdYlGn which look wrong on a dark grid)
+from matplotlib.colors import LinearSegmentedColormap
+DARK_CMAP = LinearSegmentedColormap.from_list(
+    "dark_plum", ["#241a22", "#7a3457", "#e0a3c4"]
+)
 
 st.markdown(f"""
 <style>
@@ -73,23 +85,26 @@ st.markdown(f"""
         color: {COLORS['plum_accent']} !important;
         font-weight: 700;
     }}
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 4px;
-        background-color: {COLORS['bg_secondary']};
-        border-radius: 10px;
-        padding: 6px;
-        border: 1px solid {COLORS['border']};
+    /* Sidebar page navigation (radio list) */
+    section[data-testid="stSidebar"] div[role="radiogroup"] {{
+        gap: 2px;
     }}
-    .stTabs [data-baseweb="tab"] {{
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {{
         background-color: transparent;
         border-radius: 8px;
-        color: {COLORS['text_muted']};
-        padding: 8px 16px;
-        font-weight: 500;
+        padding: 8px 10px;
+        margin: 0;
+        width: 100%;
+        transition: background-color 0.15s ease;
     }}
-    .stTabs [aria-selected="true"] {{
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
+        background-color: {COLORS['card']} !important;
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true"] {{
         background-color: {COLORS['plum']} !important;
-        color: {COLORS['text']} !important;
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"] {{
+        accent-color: {COLORS['plum_accent']};
     }}
     .stButton > button {{
         background-color: {COLORS['plum']};
@@ -126,6 +141,77 @@ st.markdown(f"""
     .stAlert {{
         background-color: {COLORS['card']};
         border: 1px solid {COLORS['border']};
+        border-radius: 10px;
+    }}
+    /* Text / number / date inputs */
+    .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {{
+        background-color: {COLORS['card']} !important;
+        color: {COLORS['text']} !important;
+        border: 1px solid {COLORS['border']} !important;
+        border-radius: 8px !important;
+    }}
+    .stTextInput input:focus, .stNumberInput input:focus {{
+        border-color: {COLORS['plum_accent']} !important;
+        box-shadow: 0 0 0 1px {COLORS['plum_accent']} !important;
+    }}
+    /* File uploader */
+    [data-testid="stFileUploaderDropzone"] {{
+        background-color: {COLORS['card']} !important;
+        border: 1px dashed {COLORS['border']} !important;
+        border-radius: 10px !important;
+    }}
+    [data-testid="stFileUploaderDropzone"] * {{
+        color: {COLORS['text_muted']} !important;
+    }}
+    [data-testid="stFileUploaderDropzone"] button {{
+        background-color: {COLORS['plum']} !important;
+        color: {COLORS['text']} !important;
+        border: 1px solid {COLORS['plum_light']} !important;
+    }}
+    [data-testid="stFileUploaderFile"] {{
+        background-color: {COLORS['bg_secondary']} !important;
+        color: {COLORS['text']} !important;
+    }}
+    /* Multiselect / selectbox chips & menus */
+    [data-baseweb="tag"] {{
+        background-color: {COLORS['plum']} !important;
+        color: {COLORS['text']} !important;
+    }}
+    [data-baseweb="popover"] li {{
+        background-color: {COLORS['card']} !important;
+        color: {COLORS['text']} !important;
+    }}
+    [data-baseweb="menu"] {{
+        background-color: {COLORS['card']} !important;
+    }}
+    /* Slider */
+    [data-testid="stSlider"] [role="slider"] {{
+        background-color: {COLORS['plum_accent']} !important;
+    }}
+    .stSlider [data-baseweb="slider"] > div > div {{
+        background: {COLORS['plum']} !important;
+    }}
+    /* Dataframe header */
+    [data-testid="stDataFrame"] div[role="columnheader"] {{
+        background-color: {COLORS['bg_secondary']} !important;
+        color: {COLORS['plum_accent']} !important;
+    }}
+    /* Tabs overflow scroller arrow buttons */
+    .stTabs button[kind="header"] {{
+        background-color: {COLORS['card']} !important;
+        color: {COLORS['text']} !important;
+    }}
+    /* Cards get subtle shadow + hover lift */
+    [data-testid="stMetric"], .stExpander, [data-testid="stFileUploaderDropzone"] {{
+        box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+    }}
+    /* Top decorative bar */
+    div[data-testid="stDecoration"] {{
+        background: linear-gradient(90deg, {COLORS['plum_deep']}, {COLORS['plum_light']}, {COLORS['plum_deep']});
+    }}
+    /* Checkbox */
+    .stCheckbox svg {{
+        color: {COLORS['plum_accent']} !important;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -252,56 +338,76 @@ def fmt_inr(x):
 st.sidebar.title("📊 MT Sales Dashboard")
 
 with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
-    st.caption("Upload each month's extract here. It's added to a running history stored on disk — "
-               "old months are kept, not overwritten.")
-    month_pick = st.text_input("Month label (e.g. Aug 2026)", value=datetime.now().strftime("%b %Y"))
-    monthly_file = st.file_uploader("Upload this month's .xlsx", type=["xlsx"], key="monthly_upload")
+    ADMIN_PASSWORD = st.secrets.get("admin_password", "changeme123") if hasattr(st, "secrets") else "changeme123"
 
-    if monthly_file is not None and st.button("➕ Add to database"):
-        try:
-            new_df = read_uploaded_excel(monthly_file)
-            missing = validate(new_df)
-            if missing:
-                st.error(f"Missing required columns: {missing}")
-            elif not month_pick.strip():
-                st.error("Please give this upload a month label first.")
+    if "admin_unlocked" not in st.session_state:
+        st.session_state.admin_unlocked = False
+
+    if not st.session_state.admin_unlocked:
+        st.caption("🔒 This section is restricted to admins.")
+        pw_input = st.text_input("Enter admin password", type="password", key="admin_pw_input")
+        if st.button("Unlock"):
+            if pw_input == ADMIN_PASSWORD:
+                st.session_state.admin_unlocked = True
+                st.rerun()
             else:
-                add_month_to_master(new_df, month_pick.strip())
-                st.success(f"Added {len(new_df):,} rows for '{month_pick.strip()}' to the database.")
-                st.cache_data.clear()
-        except Exception as e:
-            st.error(f"Could not process file: {e}")
-
-    st.markdown("---")
-    master_preview = load_master()
-    if not master_preview.empty:
-        month_summary = master_preview.groupby("Month").size().reset_index(name="Rows")
-        st.caption("**Months currently stored:**")
-        st.dataframe(month_summary, use_container_width=True, hide_index=True)
-
-        del_month = st.selectbox("Remove a month", ["—"] + sorted(master_preview["Month"].unique().tolist()))
-        if del_month != "—" and st.button("🗑️ Delete this month's data"):
-            delete_month(del_month)
-            st.success(f"Deleted '{del_month}'.")
-            st.cache_data.clear()
-            st.rerun()
-
-        csv_bytes = master_preview.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download full history (backup)", csv_bytes,
-                            file_name="mt_master_data_backup.csv", mime="text/csv")
-        st.caption("⚠️ If this app is hosted on a platform with ephemeral storage (e.g. Streamlit "
-                   "Community Cloud), the file above resets on redeploy/restart. Download a backup "
-                   "regularly, and use 'Restore from backup' below if that happens.")
-
-        restore_file = st.file_uploader("Restore from a backup .csv", type=["csv"], key="restore_upload")
-        if restore_file is not None and st.button("♻️ Restore this backup"):
-            restored = pd.read_csv(restore_file)
-            save_master(restored)
-            st.success("Restored from backup.")
-            st.cache_data.clear()
-            st.rerun()
+                st.error("Incorrect password.")
     else:
-        st.info("No data stored yet — upload your first month's file above.")
+        if st.button("🔓 Lock admin section"):
+            st.session_state.admin_unlocked = False
+            st.rerun()
+
+        st.caption("Upload each month's extract here. It's added to a running history stored on disk — "
+                   "old months are kept, not overwritten.")
+
+        month_pick = st.text_input("Month label (e.g. Aug 2026)", value=datetime.now().strftime("%b %Y"))
+        monthly_file = st.file_uploader("Upload this month's .xlsx", type=["xlsx"], key="monthly_upload")
+
+        if monthly_file is not None and st.button("➕ Add to database"):
+            try:
+                new_df = read_uploaded_excel(monthly_file)
+                missing = validate(new_df)
+                if missing:
+                    st.error(f"Missing required columns: {missing}")
+                elif not month_pick.strip():
+                    st.error("Please give this upload a month label first.")
+                else:
+                    add_month_to_master(new_df, month_pick.strip())
+                    st.success(f"Added {len(new_df):,} rows for '{month_pick.strip()}' to the database.")
+                    st.cache_data.clear()
+            except Exception as e:
+                st.error(f"Could not process file: {e}")
+
+        st.markdown("---")
+        master_preview = load_master()
+        if not master_preview.empty:
+            month_summary = master_preview.groupby("Month").size().reset_index(name="Rows")
+            st.caption("**Months currently stored:**")
+            st.dataframe(month_summary, use_container_width=True, hide_index=True)
+
+            del_month = st.selectbox("Remove a month", ["—"] + sorted(master_preview["Month"].unique().tolist()))
+            if del_month != "—" and st.button("🗑️ Delete this month's data"):
+                delete_month(del_month)
+                st.success(f"Deleted '{del_month}'.")
+                st.cache_data.clear()
+                st.rerun()
+
+            csv_bytes = master_preview.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download full history (backup)", csv_bytes,
+                                file_name="mt_master_data_backup.csv", mime="text/csv")
+            st.caption("⚠️ If this app is hosted on a platform with ephemeral storage (e.g. Streamlit "
+                       "Community Cloud), the file above resets on redeploy/restart. Download a backup "
+                       "regularly, and use 'Restore from backup' below if that happens.")
+
+            restore_file = st.file_uploader("Restore from a backup .csv", type=["csv"], key="restore_upload")
+            if restore_file is not None and st.button("♻️ Restore this backup"):
+                restored = pd.read_csv(restore_file)
+                save_master(restored)
+                st.success("Restored from backup.")
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.info("No data stored yet — upload your first month's file above.")
 
 # ============================================================
 # LOAD DATA FROM STORE
@@ -322,6 +428,26 @@ if missing_cols:
 df = enrich(master_df)
 has_mrp = "MRP" in df.columns and df["MRP"].notna().any()
 has_chain_type = "Chain Type" in df.columns and df["Chain Type"].notna().any()
+
+# ============================================================
+# SIDEBAR — PAGE NAVIGATION (replaces top tabs)
+# ============================================================
+tab_labels = ["🏠 Executive Summary"]
+if has_chain_type:
+    tab_labels.append("⚖️ Grocery vs Beauty/Pharma")
+tab_labels += [
+    "🏢 Chain Performance",
+    "🏪 Outlet Performance",
+    "📦 Category & SKU",
+    "🔄 Distribution Health",
+    "📊 Inventory & Stock",
+    "💰 Pricing & Discount" if has_mrp else "💰 Pricing (needs MRP)",
+    "🔍 Diagnostics & Exceptions",
+]
+_off = 1 if has_chain_type else 0
+
+st.sidebar.markdown("### 📑 Pages")
+page = st.sidebar.radio("Navigate", tab_labels, label_visibility="collapsed")
 
 # ============================================================
 # SIDEBAR — FILTERS
@@ -358,27 +484,12 @@ st.sidebar.caption(f"Rows loaded: {len(df):,} | After filters: {len(df_f):,} | M
 # HEADER
 # ============================================================
 st.title("Modern Trade (MT) Channel — Sales & Distribution Dashboard")
-st.caption("Chain → Outlet → SKU level performance, distribution health, inventory & pricing")
-
-tab_labels = ["🏠 Executive Summary"]
-if has_chain_type:
-    tab_labels.append("⚖️ Grocery vs Beauty/Pharma")
-tab_labels += [
-    "🏢 Chain Performance",
-    "🏪 Outlet Performance",
-    "📦 Category & SKU",
-    "🔄 Distribution Health",
-    "📊 Inventory & Stock",
-    "💰 Pricing & Discount" if has_mrp else "💰 Pricing (needs MRP)",
-    "🔍 Diagnostics & Exceptions",
-]
-tabs = st.tabs(tab_labels)
-_off = 1 if has_chain_type else 0
+st.caption(f"Chain → Outlet → SKU level performance, distribution health, inventory & pricing  •  **{page}**")
 
 # ------------------------------------------------------------
-# TAB 1: EXECUTIVE SUMMARY
+# PAGE: EXECUTIVE SUMMARY
 # ------------------------------------------------------------
-with tabs[0]:
+if page == tab_labels[0]:
     total_sales = df_f["Net Sales"].sum()
     total_qty = df_f["Net Qty"].sum()
     ly_total = df_f["Last Year Sales"].sum()
@@ -430,7 +541,7 @@ with tabs[0]:
 # TAB (optional): CHAIN TYPE COMPARISON
 # ------------------------------------------------------------
 if has_chain_type:
-    with tabs[1]:
+    if page == tab_labels[1]:
         st.subheader("Grocery MT vs Beauty & Pharma MT — Side by Side")
         ct_tbl = df_f.groupby("Chain Type").agg(
             Chains=("Chain Code", "nunique"), Outlets=("Outlet Code", "nunique"),
@@ -510,7 +621,7 @@ if has_chain_type:
 # ------------------------------------------------------------
 # TAB 2: CHAIN PERFORMANCE
 # ------------------------------------------------------------
-with tabs[1 + _off]:
+if page == tab_labels[1 + _off]:
     st.subheader("Chain-wise Scorecard")
     chain_tbl = df_f.groupby(["Chain Code", "Chain Name"]).agg(
         Outlets=("Outlet Code", "nunique"), Net_Sales=("Net Sales", "sum"), Net_Qty=("Net Qty", "sum"),
@@ -527,7 +638,7 @@ with tabs[1 + _off]:
             "Net_Sales": "{:,.0f}", "Net_Qty": "{:,.0f}", "LY_Sales": "{:,.0f}", "TY_Sales": "{:,.0f}",
             "Primary": "{:,.0f}", "Tertiary": "{:,.0f}", "YoY %": "{:.1f}%",
             "Sell-Through %": "{:.1f}%", "Avg Sales / Outlet": "{:,.0f}",
-        }).background_gradient(subset=["YoY %"], cmap="RdPu"),
+        }).background_gradient(subset=["YoY %"], cmap=DARK_CMAP),
         use_container_width=True, hide_index=True,
     )
 
@@ -551,7 +662,7 @@ with tabs[1 + _off]:
 # ------------------------------------------------------------
 # TAB 3: OUTLET PERFORMANCE
 # ------------------------------------------------------------
-with tabs[2 + _off]:
+if page == tab_labels[2 + _off]:
     st.subheader("Outlet Scorecard")
     out_tbl = df_f.groupby(["Chain Name", "Outlet Code", "Outlet Name"]).agg(
         Net_Sales=("Net Sales", "sum"), LY_Sales=("Last Year Sales", "sum"), TY_Sales=("This Year Sales", "sum"),
@@ -582,7 +693,7 @@ with tabs[2 + _off]:
             "Net_Sales": "{:,.0f}", "LY_Sales": "{:,.0f}", "TY_Sales": "{:,.0f}",
             "Primary": "{:,.0f}", "Tertiary": "{:,.0f}", "YoY %": "{:.1f}%",
             "Sell-Through %": "{:.1f}%", "Stock_Cover": "{:.0f} days",
-        }).background_gradient(subset=["YoY %"], cmap="RdPu"),
+        }).background_gradient(subset=["YoY %"], cmap=DARK_CMAP),
         use_container_width=True, hide_index=True, height=400,
     )
 
@@ -595,7 +706,7 @@ with tabs[2 + _off]:
 # ------------------------------------------------------------
 # TAB 4: CATEGORY & SKU
 # ------------------------------------------------------------
-with tabs[3 + _off]:
+if page == tab_labels[3 + _off]:
     st.subheader("Category Performance")
     cat_tbl = df_f.groupby("Category").agg(
         Net_Sales=("Net Sales", "sum"), LY_Sales=("Last Year Sales", "sum"),
@@ -656,7 +767,7 @@ with tabs[3 + _off]:
 # ------------------------------------------------------------
 # TAB 5: DISTRIBUTION HEALTH
 # ------------------------------------------------------------
-with tabs[4 + _off]:
+if page == tab_labels[4 + _off]:
     st.subheader("Primary vs Tertiary Sales")
     p_total = df_f["Primary Sales"].sum()
     t_total = df_f["Tertiary Sales"].sum()
@@ -699,7 +810,7 @@ with tabs[4 + _off]:
 # ------------------------------------------------------------
 # TAB 6: INVENTORY & STOCK
 # ------------------------------------------------------------
-with tabs[5 + _off]:
+if page == tab_labels[5 + _off]:
     st.subheader("Inventory Health Overview")
     total_stock_qty = df_f["Closing Stock"].sum()
     avg_cover = df_f["Stock Cover (Days)"].replace([np.inf, -np.inf], np.nan).mean()
@@ -743,7 +854,7 @@ with tabs[5 + _off]:
 # ------------------------------------------------------------
 # TAB 7: PRICING & DISCOUNT
 # ------------------------------------------------------------
-with tabs[6 + _off]:
+if page == tab_labels[6 + _off]:
     if not has_mrp:
         st.warning(
             "No MRP data found. Add an 'MRP Master' sheet with columns 'SKU Code' and 'MRP', "
@@ -802,14 +913,14 @@ with tabs[6 + _off]:
 # ------------------------------------------------------------
 # TAB 8: DIAGNOSTICS & EXCEPTIONS
 # ------------------------------------------------------------
-with tabs[7 + _off]:
+if page == tab_labels[7 + _off]:
     st.subheader("🔍 Outlier Detection — Abnormal YoY Swings")
     threshold = st.slider("Flag SKU-outlet combinations with |YoY change| greater than (%)", 20, 200, 50)
     outliers = df_f[df_f["YoY Growth %"].abs() > threshold].copy()
     outliers = outliers[["Chain Name", "Outlet Name", "SKU Name", "Category", "Last Year Sales", "This Year Sales", "YoY Growth %"]]
     outliers = outliers.sort_values("YoY Growth %", ascending=False)
     st.dataframe(outliers.style.format({"Last Year Sales": "{:,.0f}", "This Year Sales": "{:,.0f}", "YoY Growth %": "{:.1f}%"})
-                 .background_gradient(subset=["YoY Growth %"], cmap="RdPu"),
+                 .background_gradient(subset=["YoY Growth %"], cmap=DARK_CMAP),
                  use_container_width=True, hide_index=True, height=350)
 
     st.markdown("---")
