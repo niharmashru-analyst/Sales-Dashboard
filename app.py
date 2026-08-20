@@ -4,9 +4,12 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import re
+import requests
+from io import BytesIO
 from datetime import datetime
 
-st.set_page_config(page_title="MT Channel Sales Dashboard", layout="wide", page_icon="📊")
+st.set_page_config(page_title="MT Command Center", layout="wide", page_icon="◈", initial_sidebar_state="expanded")
 
 # Branded splash — shown while THIS script runs (data load, enrich, etc.)
 # Note: this can't cover Render's own cold-start gap (~30-60s) before your app
@@ -24,47 +27,51 @@ _splash.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# THEME — Black & Plum
+# THEME — Obsidian / Electric Violet / Cyan
 # ============================================================
 COLORS = {
-    "bg": "#0e0a0d",
-    "bg_secondary": "#181117",
-    "card": "#1f1620",
-    "border": "#3a2530",
-    "plum_deep": "#4a1f38",
-    "plum": "#7a3457",
-    "plum_light": "#a85c85",
-    "plum_accent": "#e0a3c4",
-    "text": "#f3ecf0",
-    "text_muted": "#b8a3ae",
-    "green": "#5fd68f",
-    "red": "#f0668c",
-    "amber": "#f0c169",
+    "bg": "#07090D",
+    "bg_secondary": "#0B0F16",
+    "card": "#10151E",
+    "card_2": "#141A24",
+    "border": "#202938",
+    "border_strong": "#303B4D",
+    "violet_deep": "#24124A",
+    "violet": "#7C3AED",
+    "violet_light": "#A78BFA",
+    "cyan": "#22D3EE",
+    "cyan_soft": "#67E8F9",
+    "text": "#F7F8FA",
+    "text_muted": "#94A3B8",
+    "green": "#34D399",
+    "red": "#FB7185",
+    "amber": "#FBBF24",
+    "blue": "#60A5FA",
 }
 
-PLUM_SEQUENCE = ["#e0a3c4", "#a85c85", "#f0c169", "#7a3457", "#5fd68f",
-                  "#c98cae", "#f0668c", "#4a1f38", "#8ecae6", "#d1859f"]
+MODERN_SEQUENCE = [
+    "#7C3AED", "#22D3EE", "#60A5FA", "#34D399", "#FBBF24",
+    "#A78BFA", "#FB7185", "#38BDF8", "#C084FC", "#2DD4BF"
+]
 
 import plotly.io as pio
 pio.templates.default = "plotly_dark"
-px.defaults.color_discrete_sequence = PLUM_SEQUENCE
-px.defaults.color_continuous_scale = ["#3a2530", "#7a3457", "#a85c85", "#e0a3c4"]
+px.defaults.color_discrete_sequence = MODERN_SEQUENCE
+px.defaults.color_continuous_scale = ["#172033", "#312E81", "#7C3AED", "#22D3EE"]
 
-# Dark-friendly gradient for dataframe cell highlighting — pure Python, no
-# matplotlib needed (avoids it as a deploy dependency entirely). Interpolates
-# between dark card color and plum accent based on each value's percentile.
+# Dark-friendly gradient for dataframe cell highlighting.
 def _hex_to_rgb(h):
     h = h.lstrip("#")
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
 
 def _lerp_color(c1, c2, t):
     r = tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
     return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
 
-def dark_gradient(series, low="#241a22", high="#e0a3c4"):
-    """Return a list of 'background-color: #xxxxxx' CSS strings, one per value,
-    for use with Styler.apply(..., subset=[...]). Drop-in alternative to
-    Styler.background_gradient() that doesn't require matplotlib."""
+
+def dark_gradient(series, low="#141A24", high="#7C3AED"):
+    """Return background CSS styles without requiring matplotlib."""
     c1, c2 = _hex_to_rgb(low), _hex_to_rgb(high)
     vals = pd.to_numeric(series, errors="coerce")
     vmin, vmax = vals.min(), vals.max()
@@ -74,179 +81,246 @@ def dark_gradient(series, low="#241a22", high="#e0a3c4"):
             styles.append("")
         else:
             t = (v - vmin) / (vmax - vmin)
-            styles.append(f"background-color: {_lerp_color(c1, c2, t)}; color: #f3ecf0;")
+            styles.append(f"background-color: {_lerp_color(c1, c2, t)}; color: #F7F8FA;")
     return styles
+
 
 st.markdown(f"""
 <style>
+    /* ========================================================
+       GLOBAL — premium black dashboard
+       ======================================================== */
+    :root {{
+        --bg: {COLORS['bg']};
+        --panel: {COLORS['bg_secondary']};
+        --card: {COLORS['card']};
+        --card2: {COLORS['card_2']};
+        --border: {COLORS['border']};
+        --violet: {COLORS['violet']};
+        --cyan: {COLORS['cyan']};
+        --text: {COLORS['text']};
+        --muted: {COLORS['text_muted']};
+    }}
+
     .stApp {{
-        background-color: {COLORS['bg']};
-        color: {COLORS['text']};
+        background:
+            radial-gradient(circle at 15% 0%, rgba(124,58,237,.13), transparent 28%),
+            radial-gradient(circle at 90% 8%, rgba(34,211,238,.08), transparent 25%),
+            linear-gradient(180deg, #07090D 0%, #090C12 55%, #07090D 100%);
+        color: var(--text);
     }}
+
+    [data-testid="stHeader"] {{ background: rgba(7,9,13,.82); }}
+    [data-testid="stToolbar"] {{ visibility: hidden; }}
+
+    .block-container {{
+        max-width: 1500px;
+        padding-top: 1.35rem;
+        padding-bottom: 3rem;
+    }}
+
     section[data-testid="stSidebar"] {{
-        background-color: {COLORS['bg_secondary']};
-        border-right: 1px solid {COLORS['border']};
+        background: linear-gradient(180deg, #0A0E15 0%, #080B10 100%);
+        border-right: 1px solid #1B2432;
     }}
-    section[data-testid="stSidebar"] * {{
-        color: {COLORS['text']} !important;
-    }}
+
+    section[data-testid="stSidebar"] > div {{ padding-top: 1.2rem; }}
+    section[data-testid="stSidebar"] * {{ color: var(--text) !important; }}
+
     h1, h2, h3, h4, h5, h6 {{
-        color: {COLORS['text']} !important;
-        font-weight: 600;
+        color: var(--text) !important;
+        letter-spacing: -0.025em;
     }}
-    h1 {{
-        background: linear-gradient(90deg, {COLORS['plum_accent']}, {COLORS['plum_light']});
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        padding-bottom: 4px;
+    h1 {{ font-size: 2.05rem !important; font-weight: 750 !important; }}
+    h2 {{ font-size: 1.45rem !important; font-weight: 700 !important; }}
+    h3 {{ font-size: 1.08rem !important; font-weight: 650 !important; }}
+
+    p, label, .stCaption {{ color: var(--muted); }}
+
+    /* ========================================================
+       SIDEBAR BRAND
+       ======================================================== */
+    .mt-brand {{
+        padding: 4px 4px 18px 4px;
+        margin-bottom: 10px;
     }}
-    p, span, label, div {{
-        color: {COLORS['text']};
+    .mt-brand-mark {{
+        width: 44px; height: 44px; border-radius: 13px;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: linear-gradient(135deg, #7C3AED, #22D3EE);
+        color: white; font-size: 22px; font-weight: 800;
+        box-shadow: 0 10px 30px rgba(124,58,237,.28);
+        margin-bottom: 10px;
     }}
-    [data-testid="stMetric"] {{
-        background-color: {COLORS['card']};
-        border: 1px solid {COLORS['border']};
-        border-left: 3px solid {COLORS['plum_light']};
-        border-radius: 10px;
-        padding: 16px 18px;
-    }}
-    [data-testid="stMetricLabel"] {{
-        color: {COLORS['text_muted']} !important;
-        font-size: 0.8rem;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-    }}
-    [data-testid="stMetricValue"] {{
-        color: {COLORS['plum_accent']} !important;
-        font-weight: 700;
-    }}
-    /* Sidebar page navigation (radio list) */
-    section[data-testid="stSidebar"] div[role="radiogroup"] {{
-        gap: 2px;
-    }}
+    .mt-brand-title {{ font-size: 1.02rem; font-weight: 750; color: #fff; }}
+    .mt-brand-sub {{ font-size: .72rem; color: #64748B; margin-top: 3px; letter-spacing: .08em; text-transform: uppercase; }}
+
+    /* Sidebar navigation */
+    section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 4px; }}
     section[data-testid="stSidebar"] div[role="radiogroup"] label {{
-        background-color: transparent;
-        border-radius: 8px;
-        padding: 8px 10px;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        padding: 9px 10px;
         margin: 0;
-        width: 100%;
-        transition: background-color 0.15s ease;
+        transition: all .15s ease;
     }}
     section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
-        background-color: {COLORS['card']} !important;
+        background: #111824 !important;
+        border-color: #202938 !important;
     }}
     section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true"] {{
-        background-color: {COLORS['plum']} !important;
+        background: linear-gradient(90deg, rgba(124,58,237,.24), rgba(34,211,238,.07)) !important;
+        border-color: rgba(124,58,237,.48) !important;
+        box-shadow: inset 3px 0 0 #7C3AED;
     }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"] {{
-        accent-color: {COLORS['plum_accent']};
+    section[data-testid="stSidebar"] input[type="radio"] {{ accent-color: #A78BFA; }}
+
+    /* ========================================================
+       HERO
+       ======================================================== */
+    .mt-hero {{
+        position: relative;
+        overflow: hidden;
+        border: 1px solid #202938;
+        border-radius: 18px;
+        padding: 24px 28px;
+        margin: 0 0 20px 0;
+        background:
+            radial-gradient(circle at 92% 15%, rgba(34,211,238,.12), transparent 22%),
+            radial-gradient(circle at 72% 110%, rgba(124,58,237,.16), transparent 28%),
+            linear-gradient(135deg, #0E131C, #0B1017);
+        box-shadow: 0 18px 50px rgba(0,0,0,.28);
     }}
+    .mt-hero::after {{
+        content: "";
+        position: absolute; left: 0; top: 0; width: 100%; height: 2px;
+        background: linear-gradient(90deg, #7C3AED, #22D3EE, transparent);
+    }}
+    .mt-kicker {{
+        color: #67E8F9; font-size: .72rem; font-weight: 750;
+        letter-spacing: .13em; text-transform: uppercase; margin-bottom: 7px;
+    }}
+    .mt-hero-title {{ color: #fff; font-size: 1.85rem; font-weight: 800; margin: 0; }}
+    .mt-hero-sub {{ color: #94A3B8; font-size: .88rem; margin-top: 6px; }}
+
+    /* ========================================================
+       KPI CARDS
+       ======================================================== */
+    [data-testid="stMetric"] {{
+        background: linear-gradient(145deg, #111722, #0D121A);
+        border: 1px solid #202938;
+        border-radius: 14px;
+        padding: 16px 17px;
+        min-height: 112px;
+        box-shadow: 0 8px 26px rgba(0,0,0,.20);
+        transition: transform .15s ease, border-color .15s ease;
+    }}
+    [data-testid="stMetric"]:hover {{
+        transform: translateY(-2px);
+        border-color: #39465A;
+    }}
+    [data-testid="stMetricLabel"] {{
+        color: #64748B !important;
+        font-size: .70rem !important;
+        font-weight: 700 !important;
+        text-transform: uppercase;
+        letter-spacing: .09em;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: #F8FAFC !important;
+        font-size: 1.55rem !important;
+        font-weight: 800 !important;
+        letter-spacing: -.025em;
+    }}
+    [data-testid="stMetricDelta"] {{ font-size: .76rem !important; }}
+
+    /* ========================================================
+       BUTTONS / INPUTS
+       ======================================================== */
     .stButton > button {{
-        background-color: {COLORS['plum']};
-        color: {COLORS['text']};
-        border: 1px solid {COLORS['plum_light']};
-        border-radius: 8px;
-        font-weight: 500;
+        background: linear-gradient(135deg, #7C3AED, #5B21B6);
+        color: white !important;
+        border: 1px solid #8B5CF6;
+        border-radius: 9px;
+        font-weight: 700;
+        min-height: 40px;
+        box-shadow: 0 8px 22px rgba(124,58,237,.18);
     }}
     .stButton > button:hover {{
-        background-color: {COLORS['plum_light']};
-        border-color: {COLORS['plum_accent']};
-        color: {COLORS['bg']};
+        background: linear-gradient(135deg, #8B5CF6, #06B6D4);
+        border-color: #67E8F9;
+        color: white !important;
     }}
-    .stDataFrame {{
-        border: 1px solid {COLORS['border']};
-        border-radius: 10px;
-        overflow: hidden;
-    }}
-    div[data-baseweb="select"] > div {{
-        background-color: {COLORS['card']};
-        border-color: {COLORS['border']};
-    }}
-    .stExpander {{
-        border: 1px solid {COLORS['border']} !important;
-        border-radius: 10px !important;
-        background-color: {COLORS['card']};
-    }}
-    hr {{
-        border-color: {COLORS['border']};
-    }}
-    .block-container {{
-        padding-top: 2rem;
-    }}
-    .stAlert {{
-        background-color: {COLORS['card']};
-        border: 1px solid {COLORS['border']};
-        border-radius: 10px;
-    }}
-    /* Text / number / date inputs */
+
     .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {{
-        background-color: {COLORS['card']} !important;
-        color: {COLORS['text']} !important;
-        border: 1px solid {COLORS['border']} !important;
-        border-radius: 8px !important;
+        background: #0D131C !important;
+        color: #F8FAFC !important;
+        border: 1px solid #273244 !important;
+        border-radius: 9px !important;
     }}
     .stTextInput input:focus, .stNumberInput input:focus {{
-        border-color: {COLORS['plum_accent']} !important;
-        box-shadow: 0 0 0 1px {COLORS['plum_accent']} !important;
+        border-color: #7C3AED !important;
+        box-shadow: 0 0 0 1px #7C3AED !important;
     }}
+    div[data-baseweb="select"] > div {{
+        background: #0D131C;
+        border-color: #273244;
+        border-radius: 9px;
+    }}
+    [data-baseweb="tag"] {{ background: #312E81 !important; color: #fff !important; }}
+    [data-baseweb="popover"] li, [data-baseweb="menu"] {{ background: #10151E !important; color: #F8FAFC !important; }}
+
+    /* ========================================================
+       DATAFRAMES / TABS / EXPANDERS
+       ======================================================== */
+    [data-testid="stDataFrame"] {{
+        border: 1px solid #202938;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #0D131C;
+    }}
+    [data-testid="stDataFrame"] div[role="columnheader"] {{
+        background: #101722 !important;
+        color: #A78BFA !important;
+    }}
+    .stExpander {{
+        border: 1px solid #202938 !important;
+        border-radius: 12px !important;
+        background: #0D131C;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 6px; }}
+    .stTabs [data-baseweb="tab"] {{
+        background: #0D131C;
+        border-radius: 8px;
+        padding: 7px 14px;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background: #24124A;
+        color: #C4B5FD !important;
+    }}
+    hr {{ border-color: #202938; }}
+
     /* File uploader */
     [data-testid="stFileUploaderDropzone"] {{
-        background-color: {COLORS['card']} !important;
-        border: 1px dashed {COLORS['border']} !important;
-        border-radius: 10px !important;
-    }}
-    [data-testid="stFileUploaderDropzone"] * {{
-        color: {COLORS['text_muted']} !important;
+        background: #0D131C !important;
+        border: 1px dashed #334155 !important;
+        border-radius: 12px !important;
     }}
     [data-testid="stFileUploaderDropzone"] button {{
-        background-color: {COLORS['plum']} !important;
-        color: {COLORS['text']} !important;
-        border: 1px solid {COLORS['plum_light']} !important;
+        background: #172033 !important;
+        border: 1px solid #334155 !important;
+        color: #F8FAFC !important;
     }}
-    [data-testid="stFileUploaderFile"] {{
-        background-color: {COLORS['bg_secondary']} !important;
-        color: {COLORS['text']} !important;
-    }}
-    /* Multiselect / selectbox chips & menus */
-    [data-baseweb="tag"] {{
-        background-color: {COLORS['plum']} !important;
-        color: {COLORS['text']} !important;
-    }}
-    [data-baseweb="popover"] li {{
-        background-color: {COLORS['card']} !important;
-        color: {COLORS['text']} !important;
-    }}
-    [data-baseweb="menu"] {{
-        background-color: {COLORS['card']} !important;
-    }}
-    /* Slider */
-    [data-testid="stSlider"] [role="slider"] {{
-        background-color: {COLORS['plum_accent']} !important;
-    }}
-    .stSlider [data-baseweb="slider"] > div > div {{
-        background: {COLORS['plum']} !important;
-    }}
-    /* Dataframe header */
-    [data-testid="stDataFrame"] div[role="columnheader"] {{
-        background-color: {COLORS['bg_secondary']} !important;
-        color: {COLORS['plum_accent']} !important;
-    }}
-    /* Tabs overflow scroller arrow buttons */
-    .stTabs button[kind="header"] {{
-        background-color: {COLORS['card']} !important;
-        color: {COLORS['text']} !important;
-    }}
-    /* Cards get subtle shadow + hover lift */
-    [data-testid="stMetric"], .stExpander, [data-testid="stFileUploaderDropzone"] {{
-        box-shadow: 0 2px 10px rgba(0,0,0,0.35);
-    }}
-    /* Top decorative bar */
-    div[data-testid="stDecoration"] {{
-        background: linear-gradient(90deg, {COLORS['plum_deep']}, {COLORS['plum_light']}, {COLORS['plum_deep']});
-    }}
-    /* Checkbox */
-    .stCheckbox svg {{
-        color: {COLORS['plum_accent']} !important;
+
+    /* Slider / checkbox */
+    [data-testid="stSlider"] [role="slider"] {{ background: #A78BFA !important; }}
+    .stCheckbox svg {{ color: #22D3EE !important; }}
+
+    /* Footer */
+    .mt-footer {{
+        color: #475569; font-size: .72rem; text-align: center;
+        padding: 24px 0 8px; letter-spacing: .03em;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -315,17 +389,80 @@ def delete_month(month_label):
     return master
 
 
-def read_uploaded_excel(uploaded, sales_sheet="Sales Data", mrp_sheet="MRP Master"):
-    xls = pd.ExcelFile(uploaded)
+def read_uploaded_excel(source, sales_sheet="Sales Data", mrp_sheet="MRP Master"):
+    """
+    Read Excel data from:
+    - Streamlit uploaded .xlsx file
+    - Direct .xlsx URL
+    - Google Sheets sharing URL
+    """
+    if isinstance(source, str) and source.startswith(("http://", "https://")):
+        original_url = source.strip()
+        download_url = original_url
+
+        # Convert a normal Google Sheets URL into an XLSX export URL.
+        if "docs.google.com/spreadsheets" in original_url:
+            match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", original_url)
+            if not match:
+                raise ValueError("Could not identify the Google Sheet ID from the URL.")
+
+            sheet_id = match.group(1)
+            download_url = (
+                f"https://docs.google.com/spreadsheets/d/"
+                f"{sheet_id}/export?format=xlsx"
+            )
+
+        try:
+            response = requests.get(
+                download_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/151.0.0.0 Safari/537.36"
+                    )
+                },
+                timeout=60,
+                allow_redirects=True,
+            )
+        except requests.RequestException as exc:
+            raise ValueError(f"Could not connect to the Excel link: {exc}") from exc
+
+        if response.status_code != 200:
+            raise ValueError(
+                f"Could not download Excel file. Server returned HTTP {response.status_code}. "
+                "Make sure the Google Sheet is publicly accessible or published to the web."
+            )
+
+        if not response.content:
+            raise ValueError("The link returned an empty file.")
+
+        source = BytesIO(response.content)
+
+    try:
+        xls = pd.ExcelFile(source)
+    except Exception as exc:
+        raise ValueError(
+            "The supplied link/file could not be opened as an Excel workbook. "
+            "For Google Sheets, use a normal sharing URL or a published sheet."
+        ) from exc
+
     sales_sheet_actual = sales_sheet if sales_sheet in xls.sheet_names else xls.sheet_names[0]
     df = pd.read_excel(xls, sheet_name=sales_sheet_actual)
+
     mrp_df = None
     if mrp_sheet in xls.sheet_names:
         mrp_df = pd.read_excel(xls, sheet_name=mrp_sheet)
     elif len(xls.sheet_names) > 1:
         mrp_df = pd.read_excel(xls, sheet_name=xls.sheet_names[1])
-    if mrp_df is not None and "SKU Code" in mrp_df.columns and "MRP" in mrp_df.columns:
+
+    if (
+        mrp_df is not None
+        and "SKU Code" in mrp_df.columns
+        and "MRP" in mrp_df.columns
+    ):
         df = df.merge(mrp_df[["SKU Code", "MRP"]], on="SKU Code", how="left")
+
     return df
 
 
@@ -379,10 +516,19 @@ def fetch_live_excel(url, month_label=None):
 # ============================================================
 # SIDEBAR — MONTHLY DATA MANAGER
 # ============================================================
-st.sidebar.title("📊 MT Sales Dashboard")
+st.sidebar.markdown("""
+<div class="mt-brand">
+  <div class="mt-brand-mark">◈</div>
+  <div class="mt-brand-title">MT Command Center</div>
+  <div class="mt-brand-sub">Modern Trade Analytics</div>
+</div>
+""", unsafe_allow_html=True)
 
 with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
-    ADMIN_PASSWORD = st.secrets.get("admin_password", "changeme123") if hasattr(st, "secrets") else "changeme123"
+    try:
+        ADMIN_PASSWORD = st.secrets["admin_password"]
+    except Exception:
+        ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme123")
 
     if "admin_unlocked" not in st.session_state:
         st.session_state.admin_unlocked = False
@@ -415,12 +561,11 @@ with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
                 except Exception as e:
                     st.error(f"Could not read file: {e}")
         else:
-            st.caption("Paste a direct link to a live Excel file — a Google Sheet published as .xlsx "
-                       "(File → Share → Publish to web → .xlsx), or a OneDrive/Dropbox direct-download link.")
+            st.caption("Paste a Google Sheets sharing URL or a direct Excel (.xlsx) download link. The dashboard will fetch the latest workbook.")
             live_url = st.text_input("Live Excel link", key="live_url_input")
             if live_url and st.button("⬇️ Fetch from link"):
                 try:
-                    xls = pd.ExcelFile(uploaded)
+                    new_df = read_uploaded_excel(live_url)
                     st.session_state["_fetched_df"] = new_df
                     st.success(f"Fetched {len(new_df):,} rows. Review below, then click 'Add to database'.")
                 except Exception as e:
@@ -556,8 +701,13 @@ st.sidebar.caption(f"Rows loaded: {len(df):,} | After filters: {len(df_f):,} | M
 # HEADER
 # ============================================================
 _splash.empty()
-st.title("Modern Trade (MT) Channel — Sales & Distribution Dashboard")
-st.caption(f"Chain → Outlet → SKU level performance, distribution health, inventory & pricing  •  **{page}**")
+st.markdown(f"""
+<div class="mt-hero">
+  <div class="mt-kicker">MT CHANNEL • PERFORMANCE INTELLIGENCE</div>
+  <div class="mt-hero-title">Modern Trade Command Center</div>
+  <div class="mt-hero-sub">Chain → Outlet → SKU performance • Distribution • Inventory • Pricing & Exceptions &nbsp;|&nbsp; <b style="color:#C4B5FD">{page}</b></div>
+</div>
+""", unsafe_allow_html=True)
 
 # ------------------------------------------------------------
 # PAGE: EXECUTIVE SUMMARY
@@ -1024,3 +1174,5 @@ if page == tab_labels[7 + _off]:
 
 st.markdown("---")
 st.caption("Built for MT channel reporting. Add each month's file via the sidebar to keep history growing.")
+
+st.markdown('<div class="mt-footer">MT Command Center • Built for modern trade reporting • Live data + monthly history</div>', unsafe_allow_html=True)
