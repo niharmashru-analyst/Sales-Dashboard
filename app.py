@@ -8,6 +8,21 @@ from datetime import datetime
 
 st.set_page_config(page_title="MT Channel Sales Dashboard", layout="wide", page_icon="📊")
 
+# Branded splash — shown while THIS script runs (data load, enrich, etc.)
+# Note: this can't cover Render's own cold-start gap (~30-60s) before your app
+# process has even started — that part is controlled by Render's infrastructure,
+# not by any code here, so nothing renders in the browser during it. This splash
+# covers the moment right after your app wakes up and starts running.
+_splash = st.empty()
+_splash.markdown("""
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+            height:60vh;gap:14px;">
+  <div style="font-size:2.2rem;">📊</div>
+  <div style="font-size:1.1rem;color:#e0a3c4;font-weight:600;">Loading MT Sales Dashboard…</div>
+  <div style="font-size:0.85rem;color:#b8a3ae;">Pulling your latest data together</div>
+</div>
+""", unsafe_allow_html=True)
+
 # ============================================================
 # THEME — Black & Plum
 # ============================================================
@@ -332,6 +347,15 @@ def fmt_inr(x):
     return f"₹{x:,.0f}"
 
 
+def fetch_live_excel(url, month_label=None):
+    """Read an Excel file directly from a public link (Google Sheets 'publish as .xlsx',
+    OneDrive/Dropbox direct-download link, or any other direct .xlsx URL)."""
+    df = read_uploaded_excel(url)
+    if month_label:
+        df["Month"] = month_label
+    return df
+
+
 # ============================================================
 # SIDEBAR — MONTHLY DATA MANAGER
 # ============================================================
@@ -357,15 +381,34 @@ with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
             st.session_state.admin_unlocked = False
             st.rerun()
 
-        st.caption("Upload each month's extract here. It's added to a running history stored on disk — "
-                   "old months are kept, not overwritten.")
+        st.caption("Add each month's data below — it's appended to a running history, old months are kept.")
 
+        add_mode = st.radio("Add this month's data via:", ["📎 Upload file", "🔗 Live Excel link"], horizontal=False)
         month_pick = st.text_input("Month label (e.g. Aug 2026)", value=datetime.now().strftime("%b %Y"))
-        monthly_file = st.file_uploader("Upload this month's .xlsx", type=["xlsx"], key="monthly_upload")
 
-        if monthly_file is not None and st.button("➕ Add to database"):
+        new_df = None
+        if add_mode == "📎 Upload file":
+            monthly_file = st.file_uploader("Upload this month's .xlsx", type=["xlsx"], key="monthly_upload")
+            if monthly_file is not None:
+                try:
+                    new_df = read_uploaded_excel(monthly_file)
+                except Exception as e:
+                    st.error(f"Could not read file: {e}")
+        else:
+            st.caption("Paste a direct link to a live Excel file — a Google Sheet published as .xlsx "
+                       "(File → Share → Publish to web → .xlsx), or a OneDrive/Dropbox direct-download link.")
+            live_url = st.text_input("Live Excel link", key="live_url_input")
+            if live_url and st.button("⬇️ Fetch from link"):
+                try:
+                    new_df = read_uploaded_excel(live_url)
+                    st.session_state["_fetched_df"] = new_df
+                    st.success(f"Fetched {len(new_df):,} rows. Review below, then click 'Add to database'.")
+                except Exception as e:
+                    st.error(f"Could not fetch that link: {e}")
+            new_df = st.session_state.get("_fetched_df")
+
+        if new_df is not None and st.button("➕ Add to database"):
             try:
-                new_df = read_uploaded_excel(monthly_file)
                 missing = validate(new_df)
                 if missing:
                     st.error(f"Missing required columns: {missing}")
@@ -374,9 +417,10 @@ with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
                 else:
                     add_month_to_master(new_df, month_pick.strip())
                     st.success(f"Added {len(new_df):,} rows for '{month_pick.strip()}' to the database.")
+                    st.session_state.pop("_fetched_df", None)
                     st.cache_data.clear()
             except Exception as e:
-                st.error(f"Could not process file: {e}")
+                st.error(f"Could not process data: {e}")
 
         st.markdown("---")
         master_preview = load_master()
@@ -395,11 +439,16 @@ with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
             csv_bytes = master_preview.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download full history (backup)", csv_bytes,
                                 file_name="mt_master_data_backup.csv", mime="text/csv")
-            st.caption("⚠️ If this app is hosted on a platform with ephemeral storage (e.g. Streamlit "
-                       "Community Cloud), the file above resets on redeploy/restart. Download a backup "
-                       "regularly, and use 'Restore from backup' below if that happens.")
+            st.caption("⚠️ **On Render's Free plan, this saved history does NOT survive the app going to "
+                       "sleep** — free instances wipe their local disk every time they spin down from "
+                       "inactivity (not just on redeploys). Two ways around it: (1) upgrade to a paid "
+                       "Render instance + attach a Persistent Disk, so this file survives, or (2) use the "
+                       "'🔗 Live Excel link' option above each time instead of uploads, and keep your true "
+                       "master copy in a Google Sheet — that way the data always lives outside Render and "
+                       "nothing is lost on sleep. Either way, download a backup here regularly as a safety net.")
 
             restore_file = st.file_uploader("Restore from a backup .csv", type=["csv"], key="restore_upload")
+
             if restore_file is not None and st.button("♻️ Restore this backup"):
                 restored = pd.read_csv(restore_file)
                 save_master(restored)
@@ -415,6 +464,7 @@ with st.sidebar.expander("📥 Add / Manage Monthly Data", expanded=False):
 master_df = load_master()
 
 if master_df.empty:
+    _splash.empty()
     st.title("Modern Trade (MT) Channel — Sales & Distribution Dashboard")
     st.info("👈 No data yet. Open **'Add / Manage Monthly Data'** in the sidebar and upload your first "
             "month's Excel file to get started.")
@@ -422,6 +472,7 @@ if master_df.empty:
 
 missing_cols = validate(master_df)
 if missing_cols:
+    _splash.empty()
     st.error(f"Stored data is missing required columns: {missing_cols}")
     st.stop()
 
@@ -474,6 +525,7 @@ cats_sel = st.sidebar.multiselect("Category", cat_opts, default=None)
 df_f = df_f[df_f["Category"].isin(cats_sel)] if cats_sel else df_f
 
 if df_f.empty:
+    _splash.empty()
     st.warning("No data matches the selected filters.")
     st.stop()
 
@@ -483,6 +535,7 @@ st.sidebar.caption(f"Rows loaded: {len(df):,} | After filters: {len(df_f):,} | M
 # ============================================================
 # HEADER
 # ============================================================
+_splash.empty()
 st.title("Modern Trade (MT) Channel — Sales & Distribution Dashboard")
 st.caption(f"Chain → Outlet → SKU level performance, distribution health, inventory & pricing  •  **{page}**")
 
